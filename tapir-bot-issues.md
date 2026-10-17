@@ -5,7 +5,12 @@ everything under **Body** into the issue body. They are sized for one bot run
 (one command or one component each) and point at the code to copy, so the bot
 spends its time writing code rather than searching.
 
-Suggested order: 1–4 first (cheapest, most useful), then the rest.
+Checked against upstream `main` at c7937cd (16 Oct 2026). Dropped as already
+done upstream: GetQuantitiesOfElements (#860), the SetIFCProperties and
+marker-parameter Grasshopper components, and UpdateLayers (CreateLayers with
+`overwriteExisting` already updates layers).
+
+Suggested order: 1–2 first (cheapest), then the rest.
 File them a few at a time and review each draft PR before filing more: every
 issue starts a parallel run on the maintainer's subscription.
 
@@ -43,34 +48,7 @@ Feature request: an `ElevateElements` command that moves elements vertically by 
 
 ---
 
-## 3. Grasshopper component for SetIFCPropertiesOfElements
-
-**Title:** Grasshopper: add SetIFCPropertiesOfElements component
-
-**Body:**
-
-The add-on command `SetIFCPropertiesOfElements` (registered in `archicad-addon/Sources/AddOnMain.cpp` ~line 914) has no Grasshopper component, while `GetIFCPropertiesOfElements` does.
-
-- Add `SetIFCPropertiesOfElementsComponent.cs` in `grasshopper-plugin/TapirGrasshopperPlugin/Components/IFCComponents/`, modeled on `GetIFCPropertiesOfElementsComponent.cs` and on `PropertiesComponents/SetPropertyValuesOfElementsComponent.cs` for the setter shape.
-- Read the input schema from `IFCCommands.cpp` (`SetIFCPropertiesOfElementsCommand::GetInputParametersSchema`).
-- Give it a unique component GUID and an icon like the existing ones.
-
----
-
-## 4. Grasshopper components for Get/SetMarkerParametersOfElements
-
-**Title:** Grasshopper: add Get/SetMarkerParametersOfElements components
-
-**Body:**
-
-The add-on commands `GetMarkerParametersOfElements` and `SetMarkerParametersOfElements` (registered in `archicad-addon/Sources/AddOnMain.cpp` ~line 426) have no Grasshopper components.
-
-- Add `GetMarkerParametersComponent.cs` and `SetMarkerParametersComponent.cs` in `grasshopper-plugin/TapirGrasshopperPlugin/Components/ElementsComponents/`, modeled on `GetGDLParametersComponent.cs` / `SetGDLParametersComponent.cs` (the marker commands use the same parameter shape as the GDL ones; check `ElementGDLParameterCommands.cpp`).
-- Unique component GUIDs, icons like the existing ones.
-
----
-
-## 5. FilterElements: filter by layer, story and element type
+## 3. FilterElements: filter by layer, story and element type
 
 **Title:** FilterElements: add layer, story and element type filters
 
@@ -85,7 +63,7 @@ The add-on commands `GetMarkerParametersOfElements` and `SetMarkerParametersOfEl
 
 ---
 
-## 6. Add ActivateLayerCombination command
+## 4. Add ActivateLayerCombination command
 
 **Title:** Add command to activate a layer combination
 
@@ -100,22 +78,7 @@ You can create layer combinations (`CreateLayerCombinations`) and list them (`Ge
 
 ---
 
-## 7. Add UpdateLayers command
-
-**Title:** Add UpdateLayers command (rename, hide/show, lock/unlock)
-
-**Body:**
-
-Layers can only be created or deleted; there is no way to change an existing layer's name, visibility or lock state.
-
-- Add `UpdateLayersCommand` in `archicad-addon/Sources/AttributeCommands.cpp/.hpp`.
-- Input: `layerDataArray` — array of `{ attributeId, name?, isHidden?, isLocked?, isWireframe? }`; only provided fields change.
-- Implementation: `ACAPI_Attribute_Get` → modify `API_Attribute.layer` / header flags → `ACAPI_Attribute_Modify`, inside `ACAPI_CallUndoableCommand`. Reuse the input field names of `CreateLayersCommand`.
-- Register in the Attribute group in `AddOnMain.cpp`, add an example, and extend the Grasshopper `SetLayersComponent.cs` or add `UpdateLayersComponent.cs`.
-
----
-
-## 8. Add ModifyZones command
+## 5. Add ModifyZones command
 
 **Title:** Add ModifyZones command
 
@@ -129,7 +92,7 @@ Zones can be created (`CreateZones`) but there is no `ModifyZones`, unlike walls
 
 ---
 
-## 9. Add ModifyOpenings command
+## 6. Add ModifyOpenings command
 
 **Title:** Add ModifyOpenings command
 
@@ -139,18 +102,3 @@ Openings can be created (`CreateOpenings`) but not modified.
 
 - Add `ModifyOpeningsCommand` following `ModifyWindowsCommand` (`archicad-addon/Sources/ExtendedElementCommands.cpp/.hpp`), modifying the same fields `CreateOpenings` accepts (width, height, extrusion geometry).
 - Register next to `ModifyWindowsCommand` in `AddOnMain.cpp`, add an example and a Grasshopper component next to `ModifyWindowsComponent.cs`.
-
----
-
-## 10. Add GetQuantitiesOfElements command
-
-**Title:** Add GetQuantitiesOfElements command (area, volume, length)
-
-**Body:**
-
-There is no direct way to get element quantities; today you have to look up built-in property GUIDs and call `GetPropertyValuesOfElements`.
-
-- Add `GetQuantitiesOfElementsCommand` in `archicad-addon/Sources/ElementCommands.cpp/.hpp`.
-- Input: `elements` (element ids). Response per element: `area`, `volume`, `length` where meaningful for the type (walls, slabs, beams, columns, zones, roofs, meshes, morphs); omit fields that don't apply.
-- Implementation: `ACAPI_Element_GetQuantities` with the per-type `API_ElementQuantity` fields.
-- Register in the Element group in `AddOnMain.cpp`, add an example and a Grasshopper component.
