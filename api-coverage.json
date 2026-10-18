@@ -1,5 +1,5 @@
 {
- "generatedAt": "2026-10-18 07:14 UTC",
+ "generatedAt": "2026-10-18 07:52 UTC",
  "versions": [
   25,
   26,
@@ -9,9 +9,9 @@
   30
  ],
  "counts": {
-  "open": 1691,
+  "open": 1692,
   "not applicable": 468,
-  "done": 493,
+  "done": 492,
   "merged": 250
  },
  "items": [
@@ -10602,7 +10602,7 @@
    "olderNames": [
     "APIAny_GetBuiltInLibpartUnIdID"
    ],
-   "status": "done",
+   "status": "open",
    "reason": "",
    "pullRequests": [],
    "issues": []
