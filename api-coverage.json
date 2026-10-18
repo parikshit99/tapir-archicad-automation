@@ -1,5 +1,5 @@
 {
- "generatedAt": "2026-10-18 06:52 UTC",
+ "generatedAt": "2026-10-18 07:14 UTC",
  "versions": [
   25,
   26,
@@ -9,9 +9,9 @@
   30
  ],
  "counts": {
-  "open": 1687,
+  "open": 1691,
   "not applicable": 468,
-  "done": 497,
+  "done": 493,
   "merged": 250
  },
  "items": [
@@ -7597,7 +7597,7 @@
     "ACAPI_Goodies_NeigIDToElemType",
     "APIAny_NeigIDToElemTypeID"
    ],
-   "status": "done",
+   "status": "open",
    "reason": "",
    "pullRequests": [],
    "issues": []
@@ -9208,7 +9208,7 @@
    "olderNames": [
     "ACAPI_ElementGroup_GetAllGroupedElems"
    ],
-   "status": "done",
+   "status": "open",
    "reason": "",
    "pullRequests": [],
    "issues": []
@@ -9313,7 +9313,7 @@
    "olderNames": [
     "ACAPI_ElementGroup_GetRootGroup"
    ],
-   "status": "done",
+   "status": "open",
    "reason": "",
    "pullRequests": [],
    "issues": []
@@ -14370,7 +14370,7 @@
    "olderNames": [
     "APIEnv_GetProjectNotesID"
    ],
-   "status": "done",
+   "status": "open",
    "reason": "",
    "pullRequests": [],
    "issues": []
