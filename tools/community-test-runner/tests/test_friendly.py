@@ -249,5 +249,14 @@ class OutputTest(unittest.TestCase):
         self.assertIsNone(r.fork_owner(cfg, {"head": {"repo": {"full_name": cfg["repo"]}}}))
 
 
+
+class RememberFolderTest(unittest.TestCase):
+    def test_writes_the_runner_folder_for_the_archicad_menu(self):
+        with tempfile.TemporaryDirectory() as tmp, unittest.mock.patch.object(rw, "state_dir", return_value=Path(tmp)):
+            r.remember_folder()
+            folder = Path((Path(tmp) / "runner_folder.txt").read_text(encoding="utf-8"))
+        self.assertTrue((folder / "Start Tapir Test Runner.bat").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

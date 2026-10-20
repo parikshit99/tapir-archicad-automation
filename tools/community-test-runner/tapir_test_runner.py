@@ -348,6 +348,14 @@ def default_config_path() -> Path:
     return rw.state_dir() / "runner.json"
 
 
+def remember_folder() -> None:
+    """Writes where the runner is, for Tapir > Test Runner... in Archicad, which starts it from there."""
+    try:
+        (rw.state_dir() / "runner_folder.txt").write_text(str(Path(__file__).resolve().parent), encoding="utf-8")
+    except OSError:
+        pass  # the menu then offers the guide instead
+
+
 def load_config(path: str | Path | None) -> dict:
     path = Path(path) if path else default_config_path()
     if not path.exists():

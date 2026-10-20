@@ -140,6 +140,7 @@ def run(config_path: Path | str, yes: bool, claude_skill: bool) -> int:
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(json.dumps({k: v for k, v in cfg.items() if not k.startswith("_")}, indent=2), encoding="utf-8")
     print(f"\nSaved {config_path}")
+    r.remember_folder()
 
     script = Path(r.__file__).resolve()
     if ask_yes("Open the runner's window every time you log on to Windows?", False, yes):

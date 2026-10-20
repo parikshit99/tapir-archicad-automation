@@ -259,6 +259,7 @@ class RunnerWindow:
         self.work("Benchmarking ...", job)
 
 def run(cfg: dict) -> int:
+    r.remember_folder()
     root = tk.Tk()
     RunnerWindow(root, cfg)
     root.mainloop()
