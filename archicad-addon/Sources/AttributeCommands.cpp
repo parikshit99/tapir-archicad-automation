@@ -659,6 +659,62 @@ GS::ObjectState GetCurrentLayerCombinationCommand::Execute (const GS::ObjectStat
     return response;
 }
 
+SetCurrentLayerCombinationCommand::SetCurrentLayerCombinationCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String SetCurrentLayerCombinationCommand::GetName () const
+{
+    return "SetCurrentLayerCombination";
+}
+
+GS::Optional<GS::UniString> SetCurrentLayerCombinationCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "layerCombinationId": {
+                "$ref": "#/AttributeId",
+                "description": "The layer combination to apply to the current window."
+            }
+        },
+        "additionalProperties": false,
+        "required": [
+            "layerCombinationId"
+        ]
+    })";
+}
+
+GS::Optional<GS::UniString> SetCurrentLayerCombinationCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "$ref": "#/ExecutionResult"
+    })";
+}
+
+GS::ObjectState SetCurrentLayerCombinationCommand::Execute (const GS::ObjectState& parameters, GS::ProcessControl& /*processControl*/) const
+{
+    const GS::ObjectState* layerCombinationId = parameters.Get ("layerCombinationId");
+    if (layerCombinationId == nullptr) {
+        return CreateFailedExecutionResult (APIERR_BADPARS, "layerCombinationId is missing");
+    }
+
+    API_Attribute attribute = {};
+    attribute.header.typeID = API_LayerCombID;
+    attribute.header.guid = GetGuidFromObjectState (*layerCombinationId);
+    if (attribute.header.guid == APINULLGuid || ACAPI_Attribute_Get (&attribute) != NoError) {
+        return CreateFailedExecutionResult (APIERR_BADPARS, "layerCombinationId does not identify a layer combination");
+    }
+
+    API_AttributeIndex layerCombIndex = attribute.header.index;
+    const GSErrCode err = ACAPI_Navigator_ChangeCurrLayerComb (&layerCombIndex);
+    if (err != NoError) {
+        return CreateFailedExecutionResult (err, "Failed to change the current layer combination");
+    }
+    return CreateSuccessfulExecutionResult ();
+}
+
 static GS::UniString LineItemTypeToString (API_LtypItemID itemType)
 {
     switch (itemType) {

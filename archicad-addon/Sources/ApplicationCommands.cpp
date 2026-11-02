@@ -843,6 +843,58 @@ GS::ObjectState ChangeWindowCommand::Execute (const GS::ObjectState& parameters,
         : CreateErrorResponse (err, "Failed to change the window!");
 }
 
+SetActiveToolCommand::SetActiveToolCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String SetActiveToolCommand::GetName () const
+{
+    return "SetActiveTool";
+}
+
+GS::Optional<GS::UniString> SetActiveToolCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "elementType": {
+                "$ref": "#/ElementType",
+                "description": "The tool of this element type is activated in the Toolbox, as if it was clicked. If omitted, the Arrow (selection) tool is activated."
+            }
+        },
+        "additionalProperties": false,
+        "required": []
+    })";
+}
+
+GS::Optional<GS::UniString> SetActiveToolCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "$ref": "#/ExecutionResult"
+    })";
+}
+
+GS::ObjectState SetActiveToolCommand::Execute (const GS::ObjectState& parameters, GS::ProcessControl& /*processControl*/) const
+{
+    API_ElemTypeID typeId = API_ZombieElemID; // the Arrow tool
+    GS::UniString elementTypeStr;
+    if (parameters.Get ("elementType", elementTypeStr)) {
+        typeId = GetElementTypeFromNonLocalizedName (elementTypeStr);
+        if (typeId == API_ZombieElemID) {
+            return CreateFailedExecutionResult (APIERR_BADPARS, "Unknown elementType: " + elementTypeStr);
+        }
+    }
+
+    API_ToolBoxItem toolBoxItem = {};
+    toolBoxItem.type = API_ElemType (typeId);
+    const GSErrCode err = ACAPI_Toolbox_SetToolBoxMode (&toolBoxItem);
+    if (err != NoError) {
+        return CreateFailedExecutionResult (err, "Failed to activate the tool. Not every element type has a tool the API can activate.");
+    }
+    return CreateSuccessfulExecutionResult ();
+}
+
 GetContainingDatabasesCommand::GetContainingDatabasesCommand () :
     CommandBase (CommonSchema::Used)
 {

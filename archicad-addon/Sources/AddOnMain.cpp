@@ -264,6 +264,10 @@ GSErrCode Initialize (void)
             applicationCommands, "1.3.1",
             "Changes the current (active) window to the given window. A databaseId on its own is enough; the window type is taken from the database. The databaseId of a worksheet or detail whose window was never opened opens its Project Map item instead (from Archicad 27). With windowType 'FloorPlan' and a storyIndex it also activates that story on the floor plan."
         );
+        err |= RegisterCommand<SetActiveToolCommand> (
+            applicationCommands, "1.7.4",
+            "Activates the Toolbox tool of the given element type, as clicking it does, so the next click in the window starts placing that element. Without an elementType the Arrow (selection) tool is activated. Only the tools of the supported element types can be activated."
+        );
         err |= RegisterCommand<GetContainingDatabasesCommand> (
             applicationCommands, "1.7.2",
             "Returns the database (window type, database id and name) that contains each of the given elements, from any database, not only the current one. Pass the windowType and databaseId to ChangeWindow to open it, for example to find an element placed on a layout."
@@ -1435,6 +1439,10 @@ GSErrCode Initialize (void)
         err |= RegisterCommand<GetCurrentLayerCombinationCommand> (
             attributeCommands, "1.7.2",
             "Returns the layer combination in effect in the current window. No layer combination is returned when the current state of the layers matches none."
+        );
+        err |= RegisterCommand<SetCurrentLayerCombinationCommand> (
+            attributeCommands, "1.7.4",
+            "Applies the given layer combination to the current window, as choosing it in the Layer Settings does."
         );
         err |= RegisterCommand<GetLinesCommand> (
             attributeCommands, "1.5.4",
