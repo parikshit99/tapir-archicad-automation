@@ -196,7 +196,7 @@ jobs:
             cp "$GOVW/merged.json" "$w/merged_recent.json"
             { gh api --paginate "repos/$REPO/issues/$n/comments?per_page=100"
               gh api --paginate "repos/$REPO/pulls/$n/comments?per_page=100"; } \
-              | jq -s 'add | map({login: .user.login, type: .user.type})' > "$w/comments.json" || return 1
+              | jq -s 'add | map({login: .user.login, type: .user.type, result: (.body // "" | startswith("tapir-test:"))})' > "$w/comments.json" || return 1
             gh api --paginate "repos/$REPO/pulls/$n/reviews?per_page=100" \
               | jq -s 'add // [] | map({login: .user.login, type: .user.type, state})' > "$w/reviews.json" || return 1
           }

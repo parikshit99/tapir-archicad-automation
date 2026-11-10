@@ -95,6 +95,8 @@ eq "same part clashes"  "$(gov_issue_conflicts '[{"issue":8,"part":1}]' 9 "$T/o.
 
 # ---- people
 eq "bots do not count as chatter" "$(echo '[{"login":"github-actions[bot]","type":"Bot"},{"login":"a","type":"User"}]' > "$T/c.json"; gov_human_comments "$T/c.json")" 1
+echo '[{"login":"a","type":"User","result":true},{"login":"a","type":"User","result":false}]' > "$T/c.json"
+eq "test results are not chatter" "$(gov_human_comments "$T/c.json")" 1
 RV='[{"login":"a","type":"User","state":"CHANGES_REQUESTED"},{"login":"a","type":"User","state":"COMMENTED"},{"login":"b","type":"User","state":"CHANGES_REQUESTED"},{"login":"b","type":"User","state":"APPROVED"}]'
 eq "request stands until approval" "$(echo "$RV" > "$T/r.json"; gov_changes_requested "$T/r.json")" 1
 
@@ -113,6 +115,9 @@ eq "back-and-forth holds any pr" "$(gov_report "$W" | jq -r .verdict)" contested
 echo '[]' > "$W/comments.json"
 echo '[{"number":3,"refs":[{"issue":50,"part":null}]}]' > "$W/open_others.json"
 eq "parallel solution holds any pr" "$(gov_report "$W" | jq -r '.verdict + " " + .contested[0]')" "contested a second pull request, #3, is in flight for the same issue"
+
+echo 'not json' > "$W/open_others.json"
+if out=$(gov_report "$W" 2>/dev/null); then bad "a broken check fails the report" "got: $out"; else ok "a broken check fails the report"; fi
 
 # ---- the committed files
 bash "$HERE/validate_governance.sh" >/dev/null && ok "committed scope/decisions validate" || bad "committed scope/decisions validate"

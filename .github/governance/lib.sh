@@ -10,7 +10,7 @@
 #   files.json         the pull request's files, as GET pulls/{n}/files returns them
 #   open_others.json   [{number, files, refs}]  the other open pull requests
 #   merged_recent.json [{number, files, refs}]  pull requests merged in the window
-#   comments.json      [{login, type}]          every comment and review comment
+#   comments.json      [{login, type, result}]  every comment and review comment
 #   reviews.json       [{login, type, state}]   every review, oldest first
 # "refs" is gov_issue_refs of the body.
 #
@@ -135,7 +135,9 @@ gov_issue_conflicts () {
 }
 
 # Human comments on the pull request. Args: comments.json. Prints the count.
-gov_human_comments () { jq '[ .[] | select(.type != "Bot") ] | length' "$1"; }
+# A community test result (a comment starting "tapir-test:", marked result by
+# the workflow) is a report, not a discussion, and is not counted.
+gov_human_comments () { jq '[ .[] | select(.type != "Bot" and .result != true) ] | length' "$1"; }
 
 # Reviewers whose latest decisive review requests changes. Args: reviews.json.
 # As on GitHub, a request stands until that reviewer approves or it is
@@ -148,30 +150,34 @@ gov_changes_requested () {
 # The whole verdict. Args: work dir. Prints
 #   {verdict: ok|contested|change, contested: [...], change: [...]}
 # contested applies to every pull request; change only to the issue bot's.
+# Fails (prints nothing) when any check cannot run, so the caller holds the
+# pull request rather than passing it on a broken check.
 gov_report () {
-  local w=$1 n is_bot title body refs kind chatter cr contested change='[]'
+  local w=$1 n is_bot title body refs kind chatter cr part contested='' change=''
   { read -r n; read -r is_bot; read -r title; } < <(jq -r '.number, .is_bot, (.title | gsub("\n"; " "))' "$w/meta.json")
-  body=$(jq -r '.body // ""' "$w/meta.json")
-  refs=$(printf '%s' "$body" | gov_issue_refs)
-  chatter=$(gov_human_comments "$w/comments.json")
-  cr=$(gov_changes_requested "$w/reviews.json")
+  [ -n "$n" ] && [ -n "$is_bot" ] || return 1
+  body=$(jq -r '.body // ""' "$w/meta.json") || return 1
+  refs=$(printf '%s' "$body" | gov_issue_refs) || return 1
+  chatter=$(gov_human_comments "$w/comments.json") || return 1
+  cr=$(gov_changes_requested "$w/reviews.json") || return 1
 
-  contested=$( {
-      gov_competing "$w/files.json" "$w/open_others.json" | sed 's/^/competes with /'
-      gov_reverts "$w/files.json" "$w/merged_recent.json" "$title" "$body"
-      gov_issue_conflicts "$refs" "$n" "$w/open_others.json" "$w/merged_recent.json"
-      [ "$chatter" -gt "$GOV_MAX_COMMENTS" ] && echo "$chatter human comments, more than $GOV_MAX_COMMENTS"
-      [ "$cr" -gt 0 ] && echo "$cr reviewer(s) request changes"
-      true
-    } | gov_lines_json)
+  part=$(set -o pipefail; gov_competing "$w/files.json" "$w/open_others.json" | sed 's/^/competes with /') || return 1
+  contested+=${part:+$part$'\n'}
+  part=$(gov_reverts "$w/files.json" "$w/merged_recent.json" "$title" "$body") || return 1
+  contested+=${part:+$part$'\n'}
+  part=$(gov_issue_conflicts "$refs" "$n" "$w/open_others.json" "$w/merged_recent.json") || return 1
+  contested+=${part:+$part$'\n'}
+  [ "$chatter" -gt "$GOV_MAX_COMMENTS" ] && contested+="$chatter human comments, more than $GOV_MAX_COMMENTS"$'\n'
+  [ "$cr" -gt 0 ] && contested+="$cr reviewer(s) request changes"$'\n'
+
   if [ "$is_bot" = "true" ]; then
-    kind=$(gov_change_kind "$w/files.json")
-    change=$( {
-        jq -r '.reasons[]' <<<"$kind"
-        gov_rule_hits "$w/files.json" "$(jq -r .kind <<<"$kind")"
-      } | gov_lines_json)
+    kind=$(gov_change_kind "$w/files.json") || return 1
+    part=$(jq -r '.reasons[]' <<<"$kind") || return 1
+    change+=${part:+$part$'\n'}
+    part=$(gov_rule_hits "$w/files.json" "$(jq -r .kind <<<"$kind")") || return 1
+    change+=${part:+$part$'\n'}
   fi
-  jq -n --argjson c "$contested" --argjson h "$change" \
+  jq -n --argjson c "$(printf '%s' "$contested" | gov_lines_json)" --argjson h "$(printf '%s' "$change" | gov_lines_json)" \
     '{verdict: (if ($c | length) > 0 then "contested" elif ($h | length) > 0 then "change" else "ok" end),
       contested: $c, change: $h}'
 }

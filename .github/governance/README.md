@@ -46,7 +46,7 @@ Each rule is a jq/shell test; the reasons are posted on the pull request.
 | Hunks that overlap another open, ready pull request's (files in `contention.ignore_files` excepted; two new files with one path) | all |
 | Removes at least `revert_min_matching_lines` lines that a pull request merged in the last `revert_window_days` added, or says it is a revert | all |
 | Another open pull request, or a merged one, for the same issue (`Fixes #n`; `Part k of N` only clashes with the same part) | all |
-| A reviewer's latest review requests changes, or more than `max_human_comments` human comments | all |
+| A reviewer's latest review requests changes, or more than `max_human_comments` human comments (community test results, `tapir-test:`, are not counted) | all |
 | **Change, not addition**: removes or renames a file, removes more than `max_deleted_lines` lines of an existing file, or edits an existing file in `builtin-scripts/` or `marketplace/`. Docs, tests and examples do not count. | the issue bot |
 | A ratified scope or decision entry matches | the issue bot |
 
