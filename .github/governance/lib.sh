@@ -6,7 +6,9 @@
 # the GitHub API into one work directory and calls gov_report. See README.md.
 #
 # Work directory contract (all JSON):
-#   meta.json          {number, title, body, is_bot}
+#   meta.json          {number, title, body, is_bot, behaviour}
+#                      behaviour: "fix" or "change" as the review judged the
+#                      head commit (the claude-behaviour status), else null
 #   files.json         the pull request's files, as GET pulls/{n}/files returns them
 #   open_others.json   [{number, files, refs}]  the other open pull requests
 #   merged_recent.json [{number, files, refs}]  pull requests merged in the window
@@ -54,7 +56,11 @@ gov_lines_json () { jq -Rn '[inputs]'; }
                   (.contested.max_human_comments // 8),
                   (.contested.revert_min_matching_lines // 5)' "$GOV_DIR/scope.json")
 
-# Add vs change. Args: files.json. Prints {kind: additive|change, reasons: []}.
+# Add vs change. Args: files.json. Prints
+#   {kind: additive|change, reasons: [], reviewable: []}
+# reasons always go to a person. reviewable are removed lines of existing
+# files: those pass when the review judged the pull request a contained bug
+# fix (see gov_report), because nearly every fix removes lines.
 gov_change_kind () {
   jq --arg nb "$GOV_NB_RE" --arg always "$GOV_ALWAYS_RE" --argjson max "$GOV_MAX_DEL" '
     [ .[] | select(.filename | test($nb) | not)
@@ -62,10 +68,11 @@ gov_change_kind () {
         elif .status == "renamed" then "renames \(.previous_filename // "?") to \(.filename)"
         elif .status != "added" and (.filename | test($always))
           then "modifies existing \(.filename), which reaches end users"
-        elif .status != "added" and (.deletions // 0) > $max
-          then "removes \(.deletions) line(s) of existing \(.filename)"
         else empty end ] as $r
-    | {kind: (if ($r | length) > 0 then "change" else "additive" end), reasons: $r}' "$1"
+    | [ .[] | select((.filename | test($nb) | not) and (.filename | test($always) | not)
+                     and .status == "modified" and (.deletions // 0) > $max)
+        | "removes \(.deletions) line(s) of existing \(.filename)" ] as $v
+    | {kind: (if ($r + $v | length) > 0 then "change" else "additive" end), reasons: $r, reviewable: $v}' "$1"
 }
 
 # Scope and decisions the pull request runs into. Args: files.json, kind.
@@ -208,13 +215,14 @@ gov_quality () {
 }
 
 # The whole verdict. Args: work dir. Prints
-#   {verdict: ok|contested|change|quality, contested: [...], change: [...], quality: [...]}
+#   {verdict: ok|contested|change|quality, contested: [...], change: [...], quality: [...], waived: [...]}
+# waived lists the removed lines the review let through as a bug fix.
 # contested applies to every pull request; change and quality only to the
 # issue bot's.
 # Fails (prints nothing) when any check cannot run, so the caller holds the
 # pull request rather than passing it on a broken check.
 gov_report () {
-  local w=$1 n is_bot title body refs kind chatter cr part contested='' change='' quality=''
+  local w=$1 n is_bot title body refs kind chatter cr part behaviour contested='' change='' quality='' waived=''
   { read -r n; read -r is_bot; read -r title; } < <(jq -r '.number, .is_bot, (.title | gsub("\n"; " "))' "$w/meta.json")
   [ -n "$n" ] && [ -n "$is_bot" ] || return 1
   body=$(jq -r '.body // ""' "$w/meta.json") || return 1
@@ -235,14 +243,23 @@ gov_report () {
     kind=$(gov_change_kind "$w/files.json") || return 1
     part=$(jq -r '.reasons[]' <<<"$kind") || return 1
     change+=${part:+$part$'\n'}
+    behaviour=$(jq -r '.behaviour // ""' "$w/meta.json") || return 1
+    part=$(jq -r '.reviewable[]' <<<"$kind") || return 1
+    if [ -n "$part" ]; then
+      case "$behaviour" in
+        fix)    waived+=$part$'\n' ;;
+        change) change+=$part$'\n'"the review judged this a change of behaviour, not a bug fix"$'\n' ;;
+        *)      change+=$part$'\n'"the review has not said whether this is a bug fix"$'\n' ;;
+      esac
+    fi
     part=$(gov_rule_hits "$w/files.json" "$(jq -r .kind <<<"$kind")") || return 1
     change+=${part:+$part$'\n'}
     part=$(set -o pipefail; gov_quality "$w/files.json") || return 1
     quality+=${part:+$part$'\n'}
   fi
   jq -n --argjson c "$(printf '%s' "$contested" | gov_lines_json)" --argjson h "$(printf '%s' "$change" | gov_lines_json)" \
-     --argjson q "$(printf '%s' "$quality" | gov_lines_json)" \
+     --argjson q "$(printf '%s' "$quality" | gov_lines_json)" --argjson w "$(printf '%s' "$waived" | gov_lines_json)" \
     '{verdict: (if ($c | length) > 0 then "contested" elif ($h | length) > 0 then "change"
                 elif ($q | length) > 0 then "quality" else "ok" end),
-      contested: $c, change: $h, quality: $q}'
+      contested: $c, change: $h, quality: $q, waived: $w}'
 }

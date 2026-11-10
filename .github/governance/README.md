@@ -4,7 +4,9 @@ DRAFT, local to the fork. Nothing here is filed upstream.
 
 `claude_auto_merge.yml` used to ask "green, old enough, not a release path". It now
 also asks "not contested", with plain rules over metadata. The AI reviews and triages;
-it does not decide what the project should be.
+it does not decide what the project should be, with one exception the owner chose: the
+review bot says whether a bot pull request that removes lines of existing code is a
+contained bug fix (see "Bug fixes" below).
 
 ## Files
 
@@ -47,7 +49,8 @@ Each rule is a jq/shell test; the reasons are posted on the pull request.
 | Removes at least `revert_min_matching_lines` lines that a pull request merged in the last `revert_window_days` added, or says it is a revert | all |
 | Another open pull request, or a merged one, for the same issue (`Fixes #n`; `Part k of N` only clashes with the same part) | all |
 | A reviewer's latest review requests changes, or more than `max_human_comments` human comments (community test results, `tapir-test:`, are not counted) | all |
-| **Change, not addition**: removes or renames a file, removes more than `max_deleted_lines` lines of an existing file, or edits an existing file in `builtin-scripts/` or `marketplace/`. Docs, tests and examples do not count. | the issue bot |
+| **Change, not addition**: removes or renames a file, or edits an existing file in `builtin-scripts/` or `marketplace/`. Docs, tests and examples do not count. | the issue bot |
+| Removes more than `max_deleted_lines` lines of an existing file, unless the review judged the pull request a bug fix | the issue bot |
 | A ratified scope or decision entry matches | the issue bot |
 | **Repeated code**: more than `quality.duplicate_max_percent` of the added source lines sit in blocks of `duplicate_window` lines that already exist on `main` or earlier in the same pull request (only from `duplicate_min_lines` added lines up) | the issue bot |
 | **No check**: registers a new command in `AddOnMain.cpp` without a check that calls it in `archicad-addon/Test/checks/` (in the pull request or already on `main`) | the issue bot |
@@ -55,6 +58,30 @@ Each rule is a jq/shell test; the reasons are posted on the pull request.
 A held pull request gets the `needs-direction` label and one comment; auto-merge and the
 steward leave it alone. A maintainer who removes the label releases it, and the gate is not
 applied to it again (a later conflict needs a new decision).
+
+## Bug fixes
+
+Nearly every bug fix removes lines, so a rule on removed lines alone would send every
+fix to a person. `claude_pr_review.yml` therefore ends its review of a bot pull request
+with one more nonce-tagged marker, which a job without a model records as the commit
+status `claude-behaviour`: `fix` (everything altered was wrong by the code's own schema,
+description or documentation) and `none` (only adds) are a success, `change` (different
+behaviour for correct use: renames, removals, defaults, reworks, reverts) is a failure.
+The gate lets removed lines through only on a success for the head commit; a failure or
+no status holds the pull request. A fix verdict never covers a removed or renamed file,
+an edit to an existing shared script, a ratified decision or the contested signals.
+
+This is a model's judgement, and the issue text it reads is written by anyone. What
+bounds it: the verdict is per commit, the review is told to judge by the code and not by
+what the issue calls a bug, and the waiting time and every other gate still apply.
+
+## Website lane
+
+A bot pull request that touches only `docs/` waits `BOT_AUTO_MERGE_SITE_DELAY_HOURS`
+(repository variable, default 12) after its clean review instead of 72. The site is live
+on merge, so a bug there stays public while its fix waits, and nothing under `docs/`
+reaches the signed release. The shorter wait is also less time for a person to notice a
+bad change to the site's scripts.
 
 ## Not built yet
 

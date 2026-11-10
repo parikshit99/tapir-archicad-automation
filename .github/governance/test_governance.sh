@@ -134,11 +134,18 @@ echo '{"number":9,"title":"Add command","body":"Fixes #50","is_bot":true}' > "$W
 echo '[]' > "$W/open_others.json"; echo '[]' > "$W/merged_recent.json"; echo '[]' > "$W/comments.json"; echo '[]' > "$W/reviews.json"
 eq "clean additive pr" "$(gov_report "$W" | jq -r .verdict)" ok
 { f modified archicad-addon/Sources/ElementCommands.cpp 4; } | arr > "$W/files.json"
-eq "bot change goes to a person" "$(gov_report "$W" | jq -r .verdict)" change
+eq "unreviewed removal goes to a person" "$(gov_report "$W" | jq -r '.verdict + ": " + .change[1]')" "change: the review has not said whether this is a bug fix"
+jq '.behaviour = "change"' "$W/meta.json" > "$W/m" && mv "$W/m" "$W/meta.json"
+eq "review says change: held" "$(gov_report "$W" | jq -r .verdict)" change
+jq '.behaviour = "fix"' "$W/meta.json" > "$W/m" && mv "$W/m" "$W/meta.json"
+eq "review says fix: passes" "$(gov_report "$W" | jq -r '.verdict + " " + (.waived | length | tostring)')" "ok 1"
+{ f removed archicad-addon/Sources/Old.cpp 20; f modified marketplace/x/script.py 2; } | arr > "$W/files.json"
+eq "a fix verdict does not cover removed files or shared scripts" "$(gov_report "$W" | jq -r '.verdict + " " + (.change | length | tostring)')" "change 2"
+jq 'del(.behaviour)' "$W/meta.json" > "$W/m" && mv "$W/m" "$W/meta.json"
 { f modified archicad-addon/Sources/AddOnMain.cpp 0 "$REG"; } | arr > "$W/files.json"
 eq "quality problem holds a bot pr" "$(gov_report "$W" | jq -r '.verdict + ": " + .quality[0]')" "quality: registers the new command FooBar without a check in archicad-addon/Test/checks/"
 { f modified archicad-addon/Sources/ElementCommands.cpp 4; } | arr > "$W/files.json"
-sed -i 's/"is_bot":true/"is_bot":false/' "$W/meta.json"
+jq '.is_bot = false' "$W/meta.json" > "$W/m" && mv "$W/m" "$W/meta.json"
 eq "a maintainer's change is not held" "$(gov_report "$W" | jq -r .verdict)" ok
 jq -n '[range(0;9) | {login:"p", type:"User"}]' > "$W/comments.json"
 eq "back-and-forth holds any pr" "$(gov_report "$W" | jq -r .verdict)" contested

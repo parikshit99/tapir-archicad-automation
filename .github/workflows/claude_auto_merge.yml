@@ -7,7 +7,9 @@ name: Auto Merge
 #   2. every check has passed
 #   3. the diff touches none of the release critical paths
 #   4. the pull request is not contested, and the bot's is not a change to
-#      existing behaviour, does not mostly repeat existing code and brings a
+#      existing behaviour (removed lines pass when the review judged the
+#      pull request a contained bug fix: the `claude-behaviour` status),
+#      does not mostly repeat existing code and brings a
 #      check for each new command (.github/governance/README.md): otherwise it gets the
 #      `needs-direction` label and a comment, and waits for a maintainer, who
 #      releases it by removing the label
@@ -21,7 +23,9 @@ name: Auto Merge
 #     commit and passed (claude_bot_pr_steward.yml starts them);
 #   - the commit status `claude-review` on that head is a success, and has been
 #     for BOT_AUTO_MERGE_DELAY_HOURS (repository variable, default 72) - the
-#     time people get to look. claude_pr_review.yml sets it from its verdict,
+#     time people get to look; a pull request that touches only the website
+#     (docs/) waits BOT_AUTO_MERGE_SITE_DELAY_HOURS (default 12) instead,
+#     because the site is live on merge. claude_pr_review.yml sets it from its verdict,
 #     in a job that runs no model; only jobs that run no model hold
 #     statuses: write (claude_bot_pr_steward.yml's sweep and restart, which
 #     set their own `steward-fix` status - pending while a pull request
@@ -131,6 +135,7 @@ jobs:
           REPO: ${{ github.repository }}
           BOT_AUTO_MERGE: ${{ vars.BOT_AUTO_MERGE }}
           BOT_DELAY_HOURS: ${{ vars.BOT_AUTO_MERGE_DELAY_HOURS || '72' }}
+          BOT_SITE_DELAY_HOURS: ${{ vars.BOT_AUTO_MERGE_SITE_DELAY_HOURS || '12' }}
         run: |
           set -euo pipefail
 
@@ -185,7 +190,7 @@ jobs:
           # the loop's $info. Fails closed.
           gov_collect () {
             local n=$1 w=$2 info=$3 win days f
-            jq --argjson bot "$isBot" '{number, title, body, is_bot: $bot}' <<<"$info" > "$w/meta.json" || return 1
+            jq --argjson bot "$isBot" --arg b "$behaviour" '{number, title, body, is_bot: $bot, behaviour: (if $b == "" then null else $b end)}' <<<"$info" > "$w/meta.json" || return 1
             f=$(pr_files "$n") || return 1
             cp "$f" "$w/files.json"
             # The other open, ready pull requests (a draft is parked work) and
@@ -272,6 +277,7 @@ jobs:
             isBot=$(printf '%s' "$info" | jq -r '.author.is_bot // false')
             headOid=$(printf '%s' "$info" | jq -r '.headRefOid')
             fromFork=$(printf '%s' "$info" | jq -r '.isCrossRepository')
+            behaviour=""
 
             if [ "$state" != "OPEN" ] || [ "$draft" != "false" ]; then
               echo "skip: not an open, ready pull request (state=$state draft=$draft)"
@@ -339,12 +345,31 @@ jobs:
               # The review: claude-review must be a success now, and must have
               # been one since at least BOT_DELAY_HOURS ago (the start of the
               # newest run of successes; statuses come newest first).
+              # A pull request that touches only the website (docs/) waits
+              # BOT_SITE_DELAY_HOURS instead: the site is live the moment it
+              # merges, so a bug there stays public for as long as its fix
+              # waits, and nothing in docs/ reaches the signed release.
               case "$BOT_DELAY_HOURS" in ''|*[!0-9]*) BOT_DELAY_HOURS=72 ;; esac
-              if ! statuses=$(gh api "repos/$REPO/commits/$headOid/statuses?per_page=100" \
-                   --jq '[.[] | select(.context == "claude-review") | {state, created_at}]'); then
+              case "$BOT_SITE_DELAY_HOURS" in ''|*[!0-9]*) BOT_SITE_DELAY_HOURS=12 ;; esac
+              delayHours=$BOT_DELAY_HOURS
+              if ! prFiles=$(pr_files "$pr"); then
+                echo "skip: could not read the diff"
+                echo "::endgroup::"; continue
+              fi
+              if jq -e 'length > 0 and all(.[]; [.filename, (.previous_filename // .filename)] | all(startswith("docs/")))' "$prFiles" >/dev/null; then
+                delayHours=$BOT_SITE_DELAY_HOURS
+                echo "website only: the waiting time is ${delayHours}h"
+              fi
+              if ! allStatuses=$(gh api "repos/$REPO/commits/$headOid/statuses?per_page=100"); then
                 echo "skip: could not read the commit statuses"
                 echo "::endgroup::"; continue
               fi
+              statuses=$(jq '[.[] | select(.context == "claude-review") | {state, created_at}]' <<<"$allStatuses")
+              # What the review said this head does to existing code
+              # (claude_pr_review.yml): gate 4 lets removed lines through
+              # only for a fix.
+              behaviour=$(jq -r '[.[] | select(.context == "claude-behaviour")][0]
+                                 | if . == null then "" elif .state == "success" then "fix" else "change" end' <<<"$allStatuses")
               latest=$(jq -r '.[0].state // ""' <<<"$statuses")
               if [ "$latest" != "success" ]; then
                 echo "skip: claude-review is '${latest:-not set}' on $headOid"
@@ -353,8 +378,8 @@ jobs:
               since=$(jq -r 'reduce .[] as $s ({stop: false, t: null};
                                if .stop then . elif $s.state == "success" then .t = $s.created_at else .stop = true end) | .t' <<<"$statuses")
               age=$(( $(date -u +%s) - $(date -u -d "$since" +%s) ))
-              if [ "$age" -lt $(( BOT_DELAY_HOURS * 3600 )) ]; then
-                echo "skip: the review passed $((age / 3600))h ago, waiting until ${BOT_DELAY_HOURS}h"
+              if [ "$age" -lt $(( delayHours * 3600 )) ]; then
+                echo "skip: the review passed $((age / 3600))h ago, waiting until ${delayHours}h"
                 echo "::endgroup::"; continue
               fi
 
@@ -480,6 +505,7 @@ jobs:
                 echo "::endgroup::"; continue
               fi
               verdict=$(jq -r .verdict <<<"$report")
+              jq -r '.waived[] | "let through as a bug fix by the review: " + .' <<<"$report"
               if [ "$verdict" != "ok" ]; then
                 reasons=$(jq -r '(.contested + .change + .quality)[] | "- " + .' <<<"$report")
                 echo "skip: held for a person ($verdict):"
