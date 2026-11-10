@@ -9,48 +9,48 @@
     {
       "id": "S-001",
       "statement": "New Tapir JSON commands in the Archicad Add-On, each with schemas, a registered description and one example.",
-      "kind": "additive",
       "source": "CLAUDE.md: Adding or changing a command",
-      "ratified_by": ["DRAFT"]
+      "ratified_by": [
+        "DRAFT"
+      ]
     },
     {
       "id": "S-002",
       "statement": "Grasshopper components for existing Tapir commands, and Archicad tool components (one per tool) following the ElementToolComponent pattern.",
-      "kind": "additive",
       "source": "CLAUDE.md: Grasshopper plugin",
-      "ratified_by": ["DRAFT"]
+      "ratified_by": [
+        "DRAFT"
+      ]
     },
     {
       "id": "S-003",
       "statement": "Shared scripts as a new marketplace/<slug>/ folder, adapted by the marketplace README rules.",
-      "kind": "additive",
       "source": "CLAUDE.md: Script marketplace",
-      "ratified_by": ["DRAFT"]
+      "ratified_by": [
+        "DRAFT"
+      ]
     },
     {
       "id": "S-004",
       "statement": "Support for a new Archicad version once Graphisoft publishes its DevKit (archicad_devkit_update.yml).",
-      "kind": "additive",
       "source": "CLAUDE.md: Supported Archicad versions",
-      "ratified_by": ["DRAFT"]
+      "ratified_by": [
+        "DRAFT"
+      ]
     }
   ],
   "out_of_scope": [
     {
       "id": "X-001",
       "statement": "Shared marketplace scripts are never added to builtin-scripts/.",
-      "paths": ["builtin-scripts/*"],
+      "paths": [
+        "builtin-scripts/*"
+      ],
       "blocks_additions": true,
       "source": "CLAUDE.md: Script marketplace",
-      "ratified_by": ["DRAFT"]
-    },
-    {
-      "id": "X-002",
-      "statement": "Deleting elements is never part of a Grasshopper tool component; it stays in the separate DeleteElements component.",
-      "paths": [],
-      "blocks_additions": false,
-      "source": "CLAUDE.md: Archicad tool components",
-      "ratified_by": ["DRAFT"]
+      "ratified_by": [
+        "DRAFT"
+      ]
     }
   ],
   "contention": {
@@ -70,7 +70,9 @@
       "docs/*",
       "*.md",
       "archicad-addon/Test/*",
-      "archicad-addon/Examples/*"
+      "archicad-addon/Examples/*",
+      "archicad-addon/Workflows/*",
+      "branding/*"
     ],
     "always_change_when_modified": [
       "builtin-scripts/*",

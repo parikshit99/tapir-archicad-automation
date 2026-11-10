@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "status": "DRAFT - entries are existing, documented project rules, copied from CLAUDE.md and the workflow headers. Nothing here is a new decision.",
+  "status": "DRAFT - entries are existing, documented project rules, copied from CLAUDE.md and the workflow headers. Nothing here is a new decision. Entries with no paths are a record only and never hold a pull request.",
   "decisions": [
     {
       "id": "D-0001",
@@ -8,10 +8,12 @@
       "question": "Should auto-merge also require an approval or an auto-merge label?",
       "decision": "No. Mark a pull request as a draft to opt out.",
       "kind": "policy",
-      "paths": [".github/workflows/claude_auto_merge.yml"],
-      "blocks_additions": false,
+      "paths": [],
       "source": ".github/workflows/claude_auto_merge.yml header, 'Decided and not open'",
-      "ratified_by": ["DRAFT"]
+      "ratified_by": [
+        "DRAFT"
+      ],
+      "note": "Record only: its file is a release critical path, which gate 3 already keeps from auto-merge."
     },
     {
       "id": "D-0002",
@@ -19,10 +21,12 @@
       "question": "May the bot change the release of a listed Archicad version in devkits.json?",
       "decision": "No. Versions are only appended, by archicad_devkit_update.yml.",
       "kind": "keep-default",
-      "paths": ["archicad-addon/devkits.json"],
-      "blocks_additions": false,
+      "paths": [],
       "source": "CLAUDE.md: Supported Archicad versions",
-      "ratified_by": ["DRAFT"]
+      "ratified_by": [
+        "DRAFT"
+      ],
+      "note": "Record only: its file is a release critical path, which gate 3 already keeps from auto-merge."
     },
     {
       "id": "D-0003",
@@ -30,10 +34,12 @@
       "question": "Does the legacy auto-update script move, get renamed or lose options?",
       "decision": "No. Released add-ons download it from main with fixed options.",
       "kind": "keep-default",
-      "paths": ["archicad-addon/Tools/update_addon_and_restart_archicad.py"],
-      "blocks_additions": false,
+      "paths": [],
       "source": "CLAUDE.md: Auto-update",
-      "ratified_by": ["DRAFT"]
+      "ratified_by": [
+        "DRAFT"
+      ],
+      "note": "Record only: its file is a release critical path, which gate 3 already keeps from auto-merge."
     },
     {
       "id": "D-0004",
@@ -41,10 +47,13 @@
       "question": "Does a Grasshopper tool component delete elements?",
       "decision": "No. Delete stays in the separate DeleteElements component.",
       "kind": "reject",
-      "paths": ["grasshopper-plugin/TapirGrasshopperPlugin/Components/DesignToolsComponents/*"],
-      "blocks_additions": false,
+      "paths": [
+        "grasshopper-plugin/TapirGrasshopperPlugin/Components/DesignToolsComponents/*"
+      ],
       "source": "CLAUDE.md: Archicad tool components",
-      "ratified_by": ["DRAFT"]
+      "ratified_by": [
+        "DRAFT"
+      ]
     }
   ]
 }

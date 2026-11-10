@@ -147,7 +147,6 @@ jobs:
           # It lives in lib.sh so test_governance.sh tests the same pattern.
           # shellcheck source=/dev/null
           source .github/governance/lib.sh
-          PROTECTED=$GOV_PROTECTED
 
           GOVW=$(mktemp -d)
 
@@ -163,34 +162,36 @@ jobs:
           # [{number, files, refs}] for a JSON list of {number, body}; fails
           # when any file list cannot be read.
           with_files () {
-            local list=$1 out='[]' len i n refs f
-            len=$(jq length <<<"$list")
-            for ((i = 0; i < len; i++)); do
-              n=$(jq -r ".[$i].number" <<<"$list")
-              refs=$(jq -r ".[$i].body // \"\"" <<<"$list" | gov_issue_refs)
+            local n f paths=()
+            for n in $(jq -r '.[].number' <<<"$1"); do
               f=$(pr_files "$n") || return 1
-              out=$(jq --argjson n "$n" --argjson refs "$refs" --slurpfile fs "$f" \
-                       '. + [{number: $n, files: $fs[0], refs: $refs}]' <<<"$out")
+              paths+=("$f")
             done
-            printf '%s' "$out"
+            [ ${#paths[@]} -gt 0 ] || { echo '[]'; return; }
+            jq -n --argjson list "$1" "$GOV_JQ"'
+              (reduce inputs as $fs ({}; .[input_filename | capture("files-(?<n>[0-9]+)[.]json$").n] = $fs)) as $byn
+              | $list | map({number, refs: (.body // "" | refs), files: ($byn[.number | tostring] // [])})' "${paths[@]}"
           }
 
           # Gathers the governance gate's input for one pull request into a
-          # directory (the contract is in lib.sh). Fails closed.
+          # directory (the contract is in lib.sh). Args: number, directory,
+          # the loop's $info. Fails closed.
           gov_collect () {
-            local n=$1 w=$2 bot=$3 win days
-            jq -n --argjson n "$n" --argjson bot "$bot" \
-               --slurpfile i <(gh pr view "$n" --repo "$REPO" --json title,body) \
-               '{number: $n, title: $i[0].title, body: $i[0].body, is_bot: $bot}' > "$w/meta.json" || return 1
-            cp "$(pr_files "$n")" "$w/files.json" || return 1
-            # Other open, ready pull requests (a draft is parked work).
-            with_files "$(jq --argjson n "$n" '[.[] | select(.number != $n and (.isDraft | not))]' <<<"$ALL_OPEN")" > "$w/open_others.json" || return 1
-            # Merged inside the revert window; fetched once per sweep.
+            local n=$1 w=$2 info=$3 win days f
+            jq --argjson bot "$isBot" '{number, title, body, is_bot: $bot}' <<<"$info" > "$w/meta.json" || return 1
+            f=$(pr_files "$n") || return 1
+            cp "$f" "$w/files.json"
+            # The other open, ready pull requests (a draft is parked work) and
+            # those merged inside the revert window, each built once per sweep.
+            if [ ! -s "$GOVW/open.json" ]; then
+              with_files "$(jq '[.[] | select(.isDraft | not)]' <<<"$ALL_OPEN")" > "$GOVW/open.json" || { rm -f "$GOVW/open.json"; return 1; }
+            fi
+            jq --argjson n "$n" 'map(select(.number != $n))' "$GOVW/open.json" > "$w/open_others.json"
             if [ ! -s "$GOVW/merged.json" ]; then
-              days=$(jq '.contested.revert_window_days // 14' .github/governance/scope.json)
-              win=$(date -u -d "$days days ago" +%Y-%m-%dT%H:%M:%SZ)
-              with_files "$(gh pr list --repo "$REPO" --state merged --base main --limit 100 --json number,body,mergedAt \
-                --jq "[.[] | select(.mergedAt >= \"$win\") | {number, body}]")" > "$GOVW/merged.json" || return 1
+              days=$(jq '.contested.revert_window_days // 14' "$GOV_DIR/scope.json")
+              win=$(date -u -d "$days days ago" +%Y-%m-%d)
+              with_files "$(gh pr list --repo "$REPO" --state merged --base main --limit 200 \
+                --search "merged:>=$win" --json number,body)" > "$GOVW/merged.json" || { rm -f "$GOVW/merged.json"; return 1; }
             fi
             cp "$GOVW/merged.json" "$w/merged_recent.json"
             { gh api --paginate "repos/$REPO/issues/$n/comments?per_page=100"
@@ -235,22 +236,23 @@ jobs:
           # both simpler and the only version that works for outside
           # contributions. `gh pr list` returns only the newest 30 without
           # --limit, which left every older pull request unevaluated.
-          candidates=$(gh pr list --repo "$REPO" --state open --base main --limit 1000 \
-            --json number --jq '.[].number')
-
           ALL_OPEN=$(gh pr list --repo "$REPO" --state open --base main --limit 1000 \
             --json number,body,isDraft)
+          candidates=$(jq -r '.[].number' <<<"$ALL_OPEN")
 
           if [ -z "${candidates:-}" ]; then
             echo "No open pull requests to consider."
             exit 0
           fi
 
+          gh label create needs-direction --repo "$REPO" --color B60205 \
+            --description "A maintainer has to decide before this merges" >/dev/null 2>&1 || true
+
           for pr in $candidates; do
             echo "::group::PR #$pr"
 
             if ! info=$(gh pr view "$pr" --repo "$REPO" \
-              --json number,state,isDraft,mergeable,baseRefName,author,title,headRefOid,headRefName,isCrossRepository,labels); then
+              --json number,state,isDraft,mergeable,baseRefName,author,title,body,headRefOid,headRefName,isCrossRepository,labels); then
               echo "skip: could not read the pull request"
               echo "::endgroup::"; continue
             fi
@@ -381,8 +383,7 @@ jobs:
               openByPeople=$(jq '[.reviewThreads.nodes[] | select((.isResolved | not) and (.comments.nodes[0].author.login != "github-actions"))] | length' <<<"$people")
               # As on GitHub: a reviewer's request stands until their approval
               # or its dismissal - a later COMMENTED review does not clear it.
-              changesRequested=$(jq '[.reviews.nodes[] | select(.state != "COMMENTED" and .state != "PENDING")]
-                                     | group_by(.author.login) | map(last | select(.state == "CHANGES_REQUESTED")) | length' <<<"$people")
+              changesRequested=$(jq '.reviews.nodes | map({login: .author.login, state})' <<<"$people" | gov_changes_requested /dev/stdin)
               if [ "$openByPeople" -ne 0 ] || [ "$changesRequested" -ne 0 ]; then
                 echo "skip: $openByPeople unresolved thread(s) by people, $changesRequested change request(s)"
                 echo "::endgroup::"; continue
@@ -426,11 +427,13 @@ jobs:
             fi
 
             # Gate 3: the diff must not touch the release critical paths.
-            if ! files=$(gh pr diff "$pr" --repo "$REPO" --name-only); then
+            # A rename counts by both names, so moving a file out of a
+            # protected path is caught too.
+            if ! files=$(jq -r '.[] | .filename, (.previous_filename // empty)' "$(pr_files "$pr")"); then
               echo "skip: could not read the diff"
               echo "::endgroup::"; continue
             fi
-            protectedFiles=$(printf '%s\n' "$files" | grep -E "$PROTECTED" || true)
+            protectedFiles=$(printf '%s\n' "$files" | grep -E "$GOV_PROTECTED" || true)
             if [ "$protectedFiles" = "archicad-addon/devkits.json" ] && [ "$isBot" = "true" ]; then
               if devkits_appended "$headOid" "$headName"; then
                 echo "devkits.json only gains new Archicad versions, on the DevKit update's branch - allowed"
@@ -451,13 +454,17 @@ jobs:
             # for one issue, change requests or long back-and-forth, and, for
             # the bot, removed or altered code and the ratified scope and
             # decisions. A failure to read any of it holds the pull request.
-            released=$(gh api --paginate "repos/$REPO/issues/$pr/events?per_page=100" \
-              --jq '.[] | select(.event == "unlabeled" and .label.name == "needs-direction" and .actor.type == "User") | 1' | wc -l) || released=0
-            if [ "${released:-0}" -gt 0 ]; then
+            # Cheap first: a conflicting pull request cannot merge anyway.
+            if [ "$mergeable" = "CONFLICTING" ]; then
+              echo "skip: not mergeable (mergeable=$mergeable)"
+              echo "::endgroup::"; continue
+            fi
+            if gh api --paginate "repos/$REPO/issues/$pr/events?per_page=100" \
+                 --jq '.[] | select(.event == "unlabeled" and .label.name == "needs-direction" and .actor.type == "User") | 1' | grep -q .; then
               echo "a maintainer released this pull request from needs-direction: gate 4 is not applied"
             else
               W="$GOVW/pr-$pr"; mkdir -p "$W"
-              if ! gov_collect "$pr" "$W" "$isBot"; then
+              if ! gov_collect "$pr" "$W" "$info"; then
                 echo "skip: could not read what the governance gate needs"
                 echo "::endgroup::"; continue
               fi
@@ -470,8 +477,6 @@ jobs:
                 reasons=$(jq -r '(.contested + .change)[] | "- " + .' <<<"$report")
                 echo "skip: held for a person ($verdict):"
                 printf '%s\n' "$reasons" | sed 's/^/    /'
-                gh label create needs-direction --repo "$REPO" --color B60205 \
-                  --description "A maintainer has to decide before this merges" >/dev/null 2>&1 || true
                 gh pr edit "$pr" --repo "$REPO" --add-label needs-direction || echo "::warning::could not label #$pr"
                 msg=$(printf 'Auto-merge is held for a maintainer, because:\n\n%s\n\nThis is a mechanical check, not a verdict on the change. A maintainer decides; removing the `needs-direction` label releases this pull request.' "$reasons")
                 gh pr comment "$pr" --repo "$REPO" --body "$msg" || echo "::warning::could not comment on #$pr"
@@ -516,6 +521,10 @@ jobs:
               echo "::endgroup::"; continue
             fi
             echo "merged at $headOid"
+            # No longer an open pull request for the gate of later candidates.
+            if [ -s "$GOVW/open.json" ]; then
+              jq --argjson n "$pr" 'map(select(.number != $n))' "$GOVW/open.json" > "$GOVW/open.tmp" && mv "$GOVW/open.tmp" "$GOVW/open.json"
+            fi
 
             # A part of a split issue (claude_issue_triage.yml) says
             # `Part k of N of #n` instead of `Fixes`, so the issue stays open

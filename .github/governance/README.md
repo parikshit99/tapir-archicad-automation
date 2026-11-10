@@ -27,9 +27,12 @@ from rules already written in `CLAUDE.md` or a workflow header (see its `source`
 nothing is enforced until a maintainer ratifies it.
 
 Decision: `id` (`D-0001`), `date`, `question`, `decision`, `kind` (`reject`,
-`keep-default`, `policy`), `paths` (globs, `*` also crosses `/`), `blocks_additions`,
-`source`, `ratified_by`. Scope entries: `id` (`S-`/`X-`), `statement`, `source`,
-`ratified_by`, and for `out_of_scope` also `paths` and `blocks_additions`.
+`keep-default`, `policy`), `paths` (globs, `*` also crosses `/`), `source`,
+`ratified_by`, and optionally `blocks_additions` (default false) and `note`. Scope
+entries: `id` (`S-`/`X-`), `statement`, `source`, `ratified_by`, and for
+`out_of_scope` also `paths` and `blocks_additions`. An entry with no `paths` is a
+record only: it documents a decision but never holds a pull request (D-0001 to
+D-0003 guard release critical paths, which gate 3 already keeps from auto-merge).
 
 A ratified entry holds a **change** (below) that touches its `paths`, and an **addition**
 only if `blocks_additions` is true.
