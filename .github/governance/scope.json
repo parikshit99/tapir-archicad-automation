@@ -1,0 +1,102 @@
+{
+  "schema": 1,
+  "status": "DRAFT - written by the assistant from CLAUDE.md and the workflow headers; not yet ratified by a maintainer",
+  "ratification": {
+    "min_approvers": 1,
+    "note": "Number of distinct maintainers who must be listed in ratified_by before an entry or a decision counts. Open question for the owner."
+  },
+  "in_scope": [
+    {
+      "id": "S-001",
+      "statement": "New Tapir JSON commands in the Archicad Add-On, each with schemas, a registered description and one example.",
+      "source": "CLAUDE.md: Adding or changing a command",
+      "ratified_by": [
+        "DRAFT"
+      ]
+    },
+    {
+      "id": "S-002",
+      "statement": "Grasshopper components for existing Tapir commands, and Archicad tool components (one per tool) following the ElementToolComponent pattern.",
+      "source": "CLAUDE.md: Grasshopper plugin",
+      "ratified_by": [
+        "DRAFT"
+      ]
+    },
+    {
+      "id": "S-003",
+      "statement": "Shared scripts as a new marketplace/<slug>/ folder, adapted by the marketplace README rules.",
+      "source": "CLAUDE.md: Script marketplace",
+      "ratified_by": [
+        "DRAFT"
+      ]
+    },
+    {
+      "id": "S-004",
+      "statement": "Support for a new Archicad version once Graphisoft publishes its DevKit (archicad_devkit_update.yml).",
+      "source": "CLAUDE.md: Supported Archicad versions",
+      "ratified_by": [
+        "DRAFT"
+      ]
+    }
+  ],
+  "out_of_scope": [
+    {
+      "id": "X-001",
+      "statement": "Shared marketplace scripts are never added to builtin-scripts/.",
+      "paths": [
+        "builtin-scripts/*"
+      ],
+      "blocks_additions": true,
+      "source": "CLAUDE.md: Script marketplace",
+      "ratified_by": [
+        "DRAFT"
+      ]
+    }
+  ],
+  "contention": {
+    "note": "Files two pull requests may both edit without competing: shared registries and generated files. Hunks that overlap anywhere else are competing solutions.",
+    "ignore_files": [
+      "archicad-addon/Sources/AddOnMain.cpp",
+      "archicad-addon/Sources/AddOnVersion.hpp",
+      "docs/*",
+      "README.md",
+      "*/README.md"
+    ]
+  },
+  "additive_split": {
+    "note": "A modified file with more than max_deleted_lines removed lines is a change to existing behaviour. non_behavioral paths are not counted.",
+    "max_deleted_lines": 0,
+    "non_behavioral": [
+      "docs/*",
+      "*.md",
+      "archicad-addon/Test/*",
+      "archicad-addon/Examples/*",
+      "archicad-addon/Workflows/*",
+      "branding/*"
+    ],
+    "always_change_when_modified": [
+      "builtin-scripts/*",
+      "marketplace/*"
+    ]
+  },
+  "contested": {
+    "max_human_comments": 8,
+    "revert_window_days": 14,
+    "revert_min_matching_lines": 5,
+    "note": "max_human_comments is the N of the design. All three numbers are open for the owner."
+  },
+  "quality": {
+    "note": "Quality rules for the issue bot's pull requests. Source files are the ones matching source_files outside additive_split.non_behavioral. Measured on all 890 merged pull requests that touch source code (to November 2026), counting those with at least 60 added lines: the bot's repeat a median of 7% of their added lines (95th percentile 29%, maximum 72%), people's a median of 4% (95th percentile 24%, maximum 43%). duplicate_max_percent 25 would have held 7% of the bot's. All numbers are open for the owner.",
+    "source_files": [
+      "*.cpp",
+      "*.hpp",
+      "*.h",
+      "*.cs",
+      "*.py"
+    ],
+    "duplicate_window": 6,
+    "duplicate_min_lines": 60,
+    "duplicate_max_percent": 25,
+    "require_check_for_new_commands": true
+  }
+}

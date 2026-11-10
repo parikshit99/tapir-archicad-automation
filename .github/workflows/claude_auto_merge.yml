@@ -1,11 +1,18 @@
 name: Auto Merge
 
-# Merges pull requests that clear three gates:
+# Merges pull requests that clear four gates:
 #
 #   1. the author has write access to this repository - or the pull request
 #      is the issue bot's own (see "Bot pull requests" below)
 #   2. every check has passed
 #   3. the diff touches none of the release critical paths
+#   4. the pull request is not contested, and the bot's is not a change to
+#      existing behaviour (removed lines pass when the review judged the
+#      pull request a contained bug fix: the `claude-behaviour` status),
+#      does not mostly repeat existing code and brings a
+#      check for each new command (.github/governance/README.md): otherwise it gets the
+#      `needs-direction` label and a comment, and waits for a maintainer, who
+#      releases it by removing the label
 #
 # Bot pull requests. The maintainer's decision: a pull request the issue bot
 # (claude_issue_triage.yml) opened from anyone's issue is merged without a
@@ -16,7 +23,9 @@ name: Auto Merge
 #     commit and passed (claude_bot_pr_steward.yml starts them);
 #   - the commit status `claude-review` on that head is a success, and has been
 #     for BOT_AUTO_MERGE_DELAY_HOURS (repository variable, default 72) - the
-#     time people get to look. claude_pr_review.yml sets it from its verdict,
+#     time people get to look; a pull request that touches only the website
+#     (docs/) waits BOT_AUTO_MERGE_SITE_DELAY_HOURS (default 12) instead,
+#     because the site is live on merge. claude_pr_review.yml sets it from its verdict,
 #     in a job that runs no model; only jobs that run no model hold
 #     statuses: write (claude_bot_pr_steward.yml's sweep and restart, which
 #     set their own `steward-fix` status - pending while a pull request
@@ -47,9 +56,9 @@ name: Auto Merge
 # This workflow never checks out the pull request's code. It only queries the
 # API, so nothing from the branch being merged executes with the write token.
 #
-# Decided and not open: there is deliberately no fourth gate on approval or on
-# an auto-merge label. The three gates test who wrote it, whether it is green
-# and what it touches - not whether anyone wanted it merged - so a pull request
+# Decided and not open: there is deliberately no gate on approval or on an
+# auto-merge label. The gates test who wrote it, whether it is green, what it
+# touches and whether it is contested - not whether anyone wanted it merged - so a pull request
 # left open to park work will merge itself at the next sweep. Mark such a pull
 # request as a draft, which is the opt-out. Note also that a green `review`
 # check means the review ran, not that it approved anything - for a human's
@@ -103,6 +112,22 @@ jobs:
           echo "Newer runs waiting or running: $newer"
           echo "count=$newer" >> "$GITHUB_OUTPUT"
 
+      # The governance rules (.github/governance/) and the code a bot pull
+      # request is compared with for repeated code and existing checks: main's
+      # copy, never a pull request's. Only these folders are fetched, nothing
+      # in them is run except lib.sh, and no credentials are kept.
+      - name: Load the governance rules from main
+        if: steps.newer.outputs.count == '0'
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          sparse-checkout: |
+            .github/governance
+            archicad-addon/Sources
+            archicad-addon/Test/checks
+            grasshopper-plugin/TapirGrasshopperPlugin
+          persist-credentials: false
+
       - name: Merge everything that qualifies
         if: steps.newer.outputs.count == '0'
         env:
@@ -110,6 +135,7 @@ jobs:
           REPO: ${{ github.repository }}
           BOT_AUTO_MERGE: ${{ vars.BOT_AUTO_MERGE }}
           BOT_DELAY_HOURS: ${{ vars.BOT_AUTO_MERGE_DELAY_HOURS || '72' }}
+          BOT_SITE_DELAY_HOURS: ${{ vars.BOT_AUTO_MERGE_SITE_DELAY_HOURS || '12' }}
         run: |
           set -euo pipefail
 
@@ -127,7 +153,65 @@ jobs:
           # and signs with. The one exception is the bot's own new Archicad
           # version pull request (archicad_devkit_update.yml), which may only
           # append entries to it - see devkits_appended below.
-          PROTECTED='^\.github/|^archicad-addon/Tools/|^archicad-addon/Installer/|^tools/|^archicad-addon/devkits\.json$|CMakeLists\.txt$|\.cmake$|\.csproj$'
+          # The list also holds the files that steer the bots (CLAUDE.md,
+          # AGENTS.md, SKILL.md, .claude/) and the scope and decisions files in
+          # .github/governance/, so the bots cannot edit their own direction.
+          # It lives in lib.sh so test_governance.sh tests the same pattern.
+          # shellcheck source=/dev/null
+          source .github/governance/lib.sh
+
+          GOVW=$(mktemp -d)
+
+          # Files of a pull request, fetched once per sweep. Prints the path.
+          pr_files () {
+            local f="$GOVW/files-$1.json"
+            if [ ! -s "$f" ]; then
+              gh api --paginate "repos/$REPO/pulls/$1/files?per_page=100" | jq -s 'add // []' > "$f" || { rm -f "$f"; return 1; }
+            fi
+            echo "$f"
+          }
+
+          # [{number, files, refs}] for a JSON list of {number, body}; fails
+          # when any file list cannot be read.
+          with_files () {
+            local n f paths=()
+            for n in $(jq -r '.[].number' <<<"$1"); do
+              f=$(pr_files "$n") || return 1
+              paths+=("$f")
+            done
+            [ ${#paths[@]} -gt 0 ] || { echo '[]'; return; }
+            jq -n --argjson list "$1" "$GOV_JQ"'
+              (reduce inputs as $fs ({}; .[input_filename | capture("files-(?<n>[0-9]+)[.]json$").n] = $fs)) as $byn
+              | $list | map({number, refs: (.body // "" | refs), files: ($byn[.number | tostring] // [])})' "${paths[@]}"
+          }
+
+          # Gathers the governance gate's input for one pull request into a
+          # directory (the contract is in lib.sh). Args: number, directory,
+          # the loop's $info. Fails closed.
+          gov_collect () {
+            local n=$1 w=$2 info=$3 win days f
+            jq --argjson bot "$isBot" --arg b "$behaviour" '{number, title, body, is_bot: $bot, behaviour: (if $b == "" then null else $b end)}' <<<"$info" > "$w/meta.json" || return 1
+            f=$(pr_files "$n") || return 1
+            cp "$f" "$w/files.json"
+            # The other open, ready pull requests (a draft is parked work) and
+            # those merged inside the revert window, each built once per sweep.
+            if [ ! -s "$GOVW/open.json" ]; then
+              with_files "$(jq '[.[] | select(.isDraft | not)]' <<<"$ALL_OPEN")" > "$GOVW/open.json" || { rm -f "$GOVW/open.json"; return 1; }
+            fi
+            jq --argjson n "$n" 'map(select(.number != $n))' "$GOVW/open.json" > "$w/open_others.json"
+            if [ ! -s "$GOVW/merged.json" ]; then
+              days=$(jq '.contested.revert_window_days // 14' "$GOV_DIR/scope.json")
+              win=$(date -u -d "$days days ago" +%Y-%m-%d)
+              with_files "$(gh pr list --repo "$REPO" --state merged --base main --limit 200 \
+                --search "merged:>=$win" --json number,body)" > "$GOVW/merged.json" || { rm -f "$GOVW/merged.json"; return 1; }
+            fi
+            cp "$GOVW/merged.json" "$w/merged_recent.json"
+            { gh api --paginate "repos/$REPO/issues/$n/comments?per_page=100"
+              gh api --paginate "repos/$REPO/pulls/$n/comments?per_page=100"; } \
+              | jq -s 'add | map({login: .user.login, type: .user.type, result: (.body // "" | startswith("tapir-test:"))})' > "$w/comments.json" || return 1
+            gh api --paginate "repos/$REPO/pulls/$n/reviews?per_page=100" \
+              | jq -s 'add // [] | map({login: .user.login, type: .user.type, state})' > "$w/reviews.json" || return 1
+          }
 
           # True when the head's devkits.json is main's with new Archicad
           # versions appended and nothing else changed: the same entries in the
@@ -164,19 +248,23 @@ jobs:
           # both simpler and the only version that works for outside
           # contributions. `gh pr list` returns only the newest 30 without
           # --limit, which left every older pull request unevaluated.
-          candidates=$(gh pr list --repo "$REPO" --state open --base main --limit 1000 \
-            --json number --jq '.[].number')
+          ALL_OPEN=$(gh pr list --repo "$REPO" --state open --base main --limit 1000 \
+            --json number,body,isDraft)
+          candidates=$(jq -r '.[].number' <<<"$ALL_OPEN")
 
           if [ -z "${candidates:-}" ]; then
             echo "No open pull requests to consider."
             exit 0
           fi
 
+          gh label create needs-direction --repo "$REPO" --color B60205 \
+            --description "A maintainer has to decide before this merges" >/dev/null 2>&1 || true
+
           for pr in $candidates; do
             echo "::group::PR #$pr"
 
             if ! info=$(gh pr view "$pr" --repo "$REPO" \
-              --json number,state,isDraft,mergeable,baseRefName,author,title,headRefOid,headRefName,isCrossRepository,labels); then
+              --json number,state,isDraft,mergeable,baseRefName,author,title,body,headRefOid,headRefName,isCrossRepository,labels); then
               echo "skip: could not read the pull request"
               echo "::endgroup::"; continue
             fi
@@ -189,6 +277,7 @@ jobs:
             isBot=$(printf '%s' "$info" | jq -r '.author.is_bot // false')
             headOid=$(printf '%s' "$info" | jq -r '.headRefOid')
             fromFork=$(printf '%s' "$info" | jq -r '.isCrossRepository')
+            behaviour=""
 
             if [ "$state" != "OPEN" ] || [ "$draft" != "false" ]; then
               echo "skip: not an open, ready pull request (state=$state draft=$draft)"
@@ -197,6 +286,13 @@ jobs:
 
             if [ "$base" != "main" ]; then
               echo "skip: targets '$base', not main - stacked pull requests are merged by hand"
+              echo "::endgroup::"; continue
+            fi
+
+            # Held for a person by the governance gate below (or by hand). A
+            # maintainer who removes the label releases the pull request.
+            if printf '%s' "$info" | jq -e '[.labels[].name] | index("needs-direction")' >/dev/null; then
+              echo "skip: labelled needs-direction, waiting for a maintainer"
               echo "::endgroup::"; continue
             fi
 
@@ -249,12 +345,31 @@ jobs:
               # The review: claude-review must be a success now, and must have
               # been one since at least BOT_DELAY_HOURS ago (the start of the
               # newest run of successes; statuses come newest first).
+              # A pull request that touches only the website (docs/) waits
+              # BOT_SITE_DELAY_HOURS instead: the site is live the moment it
+              # merges, so a bug there stays public for as long as its fix
+              # waits, and nothing in docs/ reaches the signed release.
               case "$BOT_DELAY_HOURS" in ''|*[!0-9]*) BOT_DELAY_HOURS=72 ;; esac
-              if ! statuses=$(gh api "repos/$REPO/commits/$headOid/statuses?per_page=100" \
-                   --jq '[.[] | select(.context == "claude-review") | {state, created_at}]'); then
+              case "$BOT_SITE_DELAY_HOURS" in ''|*[!0-9]*) BOT_SITE_DELAY_HOURS=12 ;; esac
+              delayHours=$BOT_DELAY_HOURS
+              if ! prFiles=$(pr_files "$pr"); then
+                echo "skip: could not read the diff"
+                echo "::endgroup::"; continue
+              fi
+              if jq -e 'length > 0 and all(.[]; [.filename, (.previous_filename // .filename)] | all(startswith("docs/")))' "$prFiles" >/dev/null; then
+                delayHours=$BOT_SITE_DELAY_HOURS
+                echo "website only: the waiting time is ${delayHours}h"
+              fi
+              if ! allStatuses=$(gh api "repos/$REPO/commits/$headOid/statuses?per_page=100"); then
                 echo "skip: could not read the commit statuses"
                 echo "::endgroup::"; continue
               fi
+              statuses=$(jq '[.[] | select(.context == "claude-review") | {state, created_at}]' <<<"$allStatuses")
+              # What the review said this head does to existing code
+              # (claude_pr_review.yml): gate 4 lets removed lines through
+              # only for a fix.
+              behaviour=$(jq -r '[.[] | select(.context == "claude-behaviour")][0]
+                                 | if . == null then "" elif .state == "success" then "fix" else "change" end' <<<"$allStatuses")
               latest=$(jq -r '.[0].state // ""' <<<"$statuses")
               if [ "$latest" != "success" ]; then
                 echo "skip: claude-review is '${latest:-not set}' on $headOid"
@@ -263,8 +378,8 @@ jobs:
               since=$(jq -r 'reduce .[] as $s ({stop: false, t: null};
                                if .stop then . elif $s.state == "success" then .t = $s.created_at else .stop = true end) | .t' <<<"$statuses")
               age=$(( $(date -u +%s) - $(date -u -d "$since" +%s) ))
-              if [ "$age" -lt $(( BOT_DELAY_HOURS * 3600 )) ]; then
-                echo "skip: the review passed $((age / 3600))h ago, waiting until ${BOT_DELAY_HOURS}h"
+              if [ "$age" -lt $(( delayHours * 3600 )) ]; then
+                echo "skip: the review passed $((age / 3600))h ago, waiting until ${delayHours}h"
                 echo "::endgroup::"; continue
               fi
 
@@ -300,8 +415,7 @@ jobs:
               openByPeople=$(jq '[.reviewThreads.nodes[] | select((.isResolved | not) and (.comments.nodes[0].author.login != "github-actions"))] | length' <<<"$people")
               # As on GitHub: a reviewer's request stands until their approval
               # or its dismissal - a later COMMENTED review does not clear it.
-              changesRequested=$(jq '[.reviews.nodes[] | select(.state != "COMMENTED" and .state != "PENDING")]
-                                     | group_by(.author.login) | map(last | select(.state == "CHANGES_REQUESTED")) | length' <<<"$people")
+              changesRequested=$(jq '.reviews.nodes | map({login: .author.login, state})' <<<"$people" | gov_changes_requested /dev/stdin)
               if [ "$openByPeople" -ne 0 ] || [ "$changesRequested" -ne 0 ]; then
                 echo "skip: $openByPeople unresolved thread(s) by people, $changesRequested change request(s)"
                 echo "::endgroup::"; continue
@@ -345,11 +459,13 @@ jobs:
             fi
 
             # Gate 3: the diff must not touch the release critical paths.
-            if ! files=$(gh pr diff "$pr" --repo "$REPO" --name-only); then
+            # A rename counts by both names, so moving a file out of a
+            # protected path is caught too.
+            if ! files=$(jq -r '.[] | .filename, (.previous_filename // empty)' "$(pr_files "$pr")"); then
               echo "skip: could not read the diff"
               echo "::endgroup::"; continue
             fi
-            protectedFiles=$(printf '%s\n' "$files" | grep -E "$PROTECTED" || true)
+            protectedFiles=$(printf '%s\n' "$files" | grep -E "$GOV_PROTECTED" || true)
             if [ "$protectedFiles" = "archicad-addon/devkits.json" ] && [ "$isBot" = "true" ]; then
               if devkits_appended "$headOid" "$headName"; then
                 echo "devkits.json only gains new Archicad versions, on the DevKit update's branch - allowed"
@@ -362,6 +478,43 @@ jobs:
               echo "skip: touches a release critical path:"
               printf '%s\n' "$protectedFiles" | sed 's/^/    /'
               echo "::endgroup::"; continue
+            fi
+
+            # Gate 4: not contested, and for the issue bot not a change to
+            # existing behaviour. Plain rules over metadata (.github/governance/
+            # README.md): competing pull requests, a revert, a second solution
+            # for one issue, change requests or long back-and-forth, and, for
+            # the bot, removed or altered code, the ratified scope and
+            # decisions, repeated code and a new command without a check. A failure to read any of it holds the pull request.
+            # Cheap first: a conflicting pull request cannot merge anyway.
+            if [ "$mergeable" = "CONFLICTING" ]; then
+              echo "skip: not mergeable (mergeable=$mergeable)"
+              echo "::endgroup::"; continue
+            fi
+            if gh api --paginate "repos/$REPO/issues/$pr/events?per_page=100" \
+                 --jq '.[] | select(.event == "unlabeled" and .label.name == "needs-direction" and .actor.type == "User") | 1' | grep -q .; then
+              echo "a maintainer released this pull request from needs-direction: gate 4 is not applied"
+            else
+              W="$GOVW/pr-$pr"; mkdir -p "$W"
+              if ! gov_collect "$pr" "$W" "$info"; then
+                echo "skip: could not read what the governance gate needs"
+                echo "::endgroup::"; continue
+              fi
+              if ! report=$(gov_report "$W"); then
+                echo "skip: the governance gate failed to run"
+                echo "::endgroup::"; continue
+              fi
+              verdict=$(jq -r .verdict <<<"$report")
+              jq -r '.waived[] | "let through as a bug fix by the review: " + .' <<<"$report"
+              if [ "$verdict" != "ok" ]; then
+                reasons=$(jq -r '(.contested + .change + .quality)[] | "- " + .' <<<"$report")
+                echo "skip: held for a person ($verdict):"
+                printf '%s\n' "$reasons" | sed 's/^/    /'
+                gh pr edit "$pr" --repo "$REPO" --add-label needs-direction || echo "::warning::could not label #$pr"
+                msg=$(printf 'Auto-merge is held for a maintainer, because:\n\n%s\n\nThis is a mechanical check, not a verdict on the change. A maintainer decides; removing the `needs-direction` label releases this pull request.' "$reasons")
+                gh pr comment "$pr" --repo "$REPO" --body "$msg" || echo "::warning::could not comment on #$pr"
+                echo "::endgroup::"; continue
+              fi
             fi
 
             # Conflicts, or a base branch that has moved on. GitHub computes
@@ -384,7 +537,7 @@ jobs:
               delete=""
             fi
 
-            echo "merging: all three gates passed ($total checks green, author $author: $permission)"
+            echo "merging: all gates passed ($total checks green, author $author: $permission)"
 
             # --match-head-commit pins the merge to the commit the gates were
             # evaluated against. Without it a push landing between the checks
@@ -401,6 +554,10 @@ jobs:
               echo "::endgroup::"; continue
             fi
             echo "merged at $headOid"
+            # No longer an open pull request for the gate of later candidates.
+            if [ -s "$GOVW/open.json" ]; then
+              jq --argjson n "$pr" 'map(select(.number != $n))' "$GOVW/open.json" > "$GOVW/open.tmp" && mv "$GOVW/open.tmp" "$GOVW/open.json"
+            fi
 
             # A part of a split issue (claude_issue_triage.yml) says
             # `Part k of N of #n` instead of `Fixes`, so the issue stays open
