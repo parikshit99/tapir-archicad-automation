@@ -86,7 +86,7 @@
     "note": "max_human_comments is the N of the design. All three numbers are open for the owner."
   },
   "quality": {
-    "note": "Quality rules for the issue bot's pull requests. Source files are the ones matching source_files outside additive_split.non_behavioral. duplicate_max_percent comes from 20 merged pull requests (November 2026): people's repeated 0% of their added lines, the bot's up to 38%. All numbers are open for the owner.",
+    "note": "Quality rules for the issue bot's pull requests. Source files are the ones matching source_files outside additive_split.non_behavioral. Measured on all 890 merged pull requests that touch source code (to November 2026), counting those with at least 60 added lines: the bot's repeat a median of 7% of their added lines (95th percentile 29%, maximum 72%), people's a median of 4% (95th percentile 24%, maximum 43%). duplicate_max_percent 25 would have held 7% of the bot's. All numbers are open for the owner.",
     "source_files": [
       "*.cpp",
       "*.hpp",
