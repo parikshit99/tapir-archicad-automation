@@ -147,13 +147,74 @@ gov_changes_requested () {
       | group_by(.login) | map(last | select(.state == "CHANGES_REQUESTED")) | length' "$1"
 }
 
+# Quality rules for a bot pull request. Args: files.json. Prints one reason per
+# line. GOV_REPO is a checkout of main (the code the pull request is compared
+# with); only the folders the workflow fetches need to be there.
+#   duplicates  added blocks that repeat code already in main or in the
+#               pull request itself
+#   checks      a newly registered command without a check in Test/checks/
+gov_quality () {
+  local files=$1 repo=${GOV_REPO:-$GOV_DIR/../..} q src cmd
+  q=$(jq -c '.quality // {}' "$GOV_DIR/scope.json") || return 1
+  src=$(jq -r "$GOV_JQ"'(.source_files // []) | glob_re' <<<"$q") || return 1
+
+  # Duplicates: windows of K significant lines. First main, then the added
+  # lines of the pull request, block by block.
+  jq -r --arg src "$src" --arg nb "$GOV_NB_RE" \
+     '.[] | select(.status != "removed" and (.filename | test($src)) and (.filename | test($nb) | not)) | "@@", (.patch // "")' "$files" \
+    > "${files%.json}.added" || return 1
+  { [ -d "$repo" ] && find "$repo/archicad-addon/Sources" "$repo/grasshopper-plugin/TapirGrasshopperPlugin" \
+      -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' -o -name '*.cs' \) -exec cat {} + 2>/dev/null; true; } \
+    | awk -v K="$(jq '.duplicate_window // 6' <<<"$q")" -v MIN="$(jq '.duplicate_min_lines // 60' <<<"$q")" \
+          -v PCT="$(jq '.duplicate_max_percent // 50' <<<"$q")" '
+      function norm(s) { sub(/^[ \t]+/, "", s); sub(/[ \t\r]+$/, "", s); return s }
+      function sig(s)  { return length(s) >= 8 && s !~ /^(\/\/|#include|using |\*|\/\*)/ }
+      function flush(   i, j, key) {
+        for (i = 1; i + K - 1 <= m; i++) {
+          key = run[i]; for (j = 1; j < K; j++) key = key "\n" run[i + j]
+          if (key in seen) for (j = 0; j < K; j++) dup[base + i + j] = 1
+          else seen[key] = 1
+        }
+        base += m; m = 0
+      }
+      mode == "main" {
+        s = norm($0); if (!sig(s)) next
+        win[++n % K] = s
+        if (n >= K) { key = win[(n + 1) % K]; for (j = 2; j <= K; j++) key = key "\n" win[(n + j) % K]; seen[key] = 1 }
+        next
+      }
+      /^\+/ { s = norm(substr($0, 2)); if (sig(s)) { run[++m] = s; total++ }; next }
+      { flush() }
+      END {
+        flush(); d = 0; for (i in dup) d++
+        if (total >= MIN && d * 100 > total * PCT)
+          printf "%d of %d added source lines repeat code that already exists (blocks of %d lines or more)\n", d, total, K
+      }' mode=main - mode=pr "${files%.json}.added" || return 1
+
+  # A new command needs a check the community test runner executes.
+  [ "$(jq '.require_check_for_new_commands // false' <<<"$q")" = "true" ] || return 0
+  while IFS= read -r cmd; do
+    [ -n "$cmd" ] || continue
+    if jq -e --arg c "$cmd" 'any(.[]; (.filename | startswith("archicad-addon/Test/checks/")) and .status != "removed"
+                                     and ((.patch // "") | test("\"command\"\\s*:\\s*\"" + $c + "\"")))' "$files" >/dev/null \
+       || grep -rqsE "\"command\"[[:space:]]*:[[:space:]]*\"$cmd\"" "$repo/archicad-addon/Test/checks"; then
+      continue
+    fi
+    echo "registers the new command $cmd without a check in archicad-addon/Test/checks/"
+  done < <(jq -r '.[] | select(.filename == "archicad-addon/Sources/AddOnMain.cpp") | .patch // ""
+                  | [ scan("(?m)^([+-]).*RegisterCommand<\\s*([A-Za-z0-9_]+?)(?:Command)?\\s*>") ]
+                  | (map(select(.[0] == "-") | .[1])) as $gone
+                  | map(select(.[0] == "+") | .[1]) - $gone | unique | .[]' "$files")
+}
+
 # The whole verdict. Args: work dir. Prints
-#   {verdict: ok|contested|change, contested: [...], change: [...]}
-# contested applies to every pull request; change only to the issue bot's.
+#   {verdict: ok|contested|change|quality, contested: [...], change: [...], quality: [...]}
+# contested applies to every pull request; change and quality only to the
+# issue bot's.
 # Fails (prints nothing) when any check cannot run, so the caller holds the
 # pull request rather than passing it on a broken check.
 gov_report () {
-  local w=$1 n is_bot title body refs kind chatter cr part contested='' change=''
+  local w=$1 n is_bot title body refs kind chatter cr part contested='' change='' quality=''
   { read -r n; read -r is_bot; read -r title; } < <(jq -r '.number, .is_bot, (.title | gsub("\n"; " "))' "$w/meta.json")
   [ -n "$n" ] && [ -n "$is_bot" ] || return 1
   body=$(jq -r '.body // ""' "$w/meta.json") || return 1
@@ -176,8 +237,12 @@ gov_report () {
     change+=${part:+$part$'\n'}
     part=$(gov_rule_hits "$w/files.json" "$(jq -r .kind <<<"$kind")") || return 1
     change+=${part:+$part$'\n'}
+    part=$(set -o pipefail; gov_quality "$w/files.json") || return 1
+    quality+=${part:+$part$'\n'}
   fi
   jq -n --argjson c "$(printf '%s' "$contested" | gov_lines_json)" --argjson h "$(printf '%s' "$change" | gov_lines_json)" \
-    '{verdict: (if ($c | length) > 0 then "contested" elif ($h | length) > 0 then "change" else "ok" end),
-      contested: $c, change: $h}'
+     --argjson q "$(printf '%s' "$quality" | gov_lines_json)" \
+    '{verdict: (if ($c | length) > 0 then "contested" elif ($h | length) > 0 then "change"
+                elif ($q | length) > 0 then "quality" else "ok" end),
+      contested: $c, change: $h, quality: $q}'
 }

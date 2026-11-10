@@ -100,6 +100,33 @@ eq "test results are not chatter" "$(gov_human_comments "$T/c.json")" 1
 RV='[{"login":"a","type":"User","state":"CHANGES_REQUESTED"},{"login":"a","type":"User","state":"COMMENTED"},{"login":"b","type":"User","state":"CHANGES_REQUESTED"},{"login":"b","type":"User","state":"APPROVED"}]'
 eq "request stands until approval" "$(echo "$RV" > "$T/r.json"; gov_changes_requested "$T/r.json")" 1
 
+# ---- quality (bot pull requests)
+R="$T/repo"; mkdir -p "$R/archicad-addon/Sources" "$R/archicad-addon/Test/checks" "$R/grasshopper-plugin/TapirGrasshopperPlugin"
+for i in $(seq 1 80); do echo "    existing_function_call_number_$i (argument);"; done > "$R/archicad-addon/Sources/Old.cpp"
+echo '{"steps":[{"command":"HasCheck"}]}' > "$R/archicad-addon/Test/checks/has.json"
+export GOV_REPO="$R"
+copied=$(printf '@@ -0,0 +1,80 @@\n'; sed 's/^/+/' "$R/archicad-addon/Sources/Old.cpp")
+fresh=$(printf '@@ -0,0 +1,80 @@\n'; for i in $(seq 1 80); do echo "+    brand_new_statement_$i = compute ($i);"; done)
+looped=$(printf '@@ -0,0 +1,80 @@\n'; for r in $(seq 1 8); do for i in $(seq 1 10); do echo "+    repeated_block_line_$i (value);"; done; done)
+q () { gov_quality "$T/q.json"; }
+{ f added archicad-addon/Sources/New.cpp 0 "$copied"; } | arr > "$T/q.json"
+eq "copied code is flagged" "$(q)" "80 of 80 added source lines repeat code that already exists (blocks of 6 lines or more)"
+{ f added archicad-addon/Sources/New.cpp 0 "$fresh"; } | arr > "$T/q.json"
+eq "new code is not" "$(q)" ""
+{ f added archicad-addon/Sources/New.cpp 0 "$looped"; } | arr > "$T/q.json"
+eq "a block repeated inside the pull request is flagged" "$(q | cut -d' ' -f1-3)" "70 of 80"
+{ f added archicad-addon/Examples/A/New.py 0 "$copied"; } | arr > "$T/q.json"
+eq "examples are not measured" "$(q)" ""
+REG=$'@@ -10,2 +10,6 @@\n ctx\n+        err |= RegisterCommand<FooBarCommand> (\n+            group, "1.2.3"_s,'
+{ f modified archicad-addon/Sources/AddOnMain.cpp 0 "$REG"; } | arr > "$T/q.json"
+eq "new command without a check" "$(q)" "registers the new command FooBar without a check in archicad-addon/Test/checks/"
+{ f modified archicad-addon/Sources/AddOnMain.cpp 0 "$REG"; f added archicad-addon/Test/checks/foo.json 0 $'@@ -0,0 +1 @@\n+{"steps":[{"command": "FooBar"}]}'; } | arr > "$T/q.json"
+eq "new command with its check" "$(q)" ""
+{ f modified archicad-addon/Sources/AddOnMain.cpp 0 "${REG//FooBar/HasCheck}"; } | arr > "$T/q.json"
+eq "a check already on main counts" "$(q)" ""
+{ f modified archicad-addon/Sources/AddOnMain.cpp 1 $'@@ -10,2 +10,2 @@\n-        err |= RegisterCommand<FooBarCommand> (\n+    err |= RegisterCommand<FooBarCommand> ('; } | arr > "$T/q.json"
+eq "a moved registration is not a new command" "$(q)" ""
+
 # ---- the whole report
 W="$T/w"; mkdir "$W"
 echo '{"number":9,"title":"Add command","body":"Fixes #50","is_bot":true}' > "$W/meta.json"
@@ -108,6 +135,9 @@ echo '[]' > "$W/open_others.json"; echo '[]' > "$W/merged_recent.json"; echo '[]
 eq "clean additive pr" "$(gov_report "$W" | jq -r .verdict)" ok
 { f modified archicad-addon/Sources/ElementCommands.cpp 4; } | arr > "$W/files.json"
 eq "bot change goes to a person" "$(gov_report "$W" | jq -r .verdict)" change
+{ f modified archicad-addon/Sources/AddOnMain.cpp 0 "$REG"; } | arr > "$W/files.json"
+eq "quality problem holds a bot pr" "$(gov_report "$W" | jq -r '.verdict + ": " + .quality[0]')" "quality: registers the new command FooBar without a check in archicad-addon/Test/checks/"
+{ f modified archicad-addon/Sources/ElementCommands.cpp 4; } | arr > "$W/files.json"
 sed -i 's/"is_bot":true/"is_bot":false/' "$W/meta.json"
 eq "a maintainer's change is not held" "$(gov_report "$W" | jq -r .verdict)" ok
 jq -n '[range(0;9) | {login:"p", type:"User"}]' > "$W/comments.json"

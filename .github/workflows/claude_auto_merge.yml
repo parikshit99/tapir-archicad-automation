@@ -7,7 +7,8 @@ name: Auto Merge
 #   2. every check has passed
 #   3. the diff touches none of the release critical paths
 #   4. the pull request is not contested, and the bot's is not a change to
-#      existing behaviour (.github/governance/README.md): otherwise it gets the
+#      existing behaviour, does not mostly repeat existing code and brings a
+#      check for each new command (.github/governance/README.md): otherwise it gets the
 #      `needs-direction` label and a comment, and waits for a maintainer, who
 #      releases it by removing the label
 #
@@ -107,14 +108,20 @@ jobs:
           echo "Newer runs waiting or running: $newer"
           echo "count=$newer" >> "$GITHUB_OUTPUT"
 
-      # The governance rules (.github/governance/): main's copy, never a pull
-      # request's. Only that folder is fetched, and no credentials are kept.
+      # The governance rules (.github/governance/) and the code a bot pull
+      # request is compared with for repeated code and existing checks: main's
+      # copy, never a pull request's. Only these folders are fetched, nothing
+      # in them is run except lib.sh, and no credentials are kept.
       - name: Load the governance rules from main
         if: steps.newer.outputs.count == '0'
         uses: actions/checkout@v6
         with:
           ref: main
-          sparse-checkout: .github/governance
+          sparse-checkout: |
+            .github/governance
+            archicad-addon/Sources
+            archicad-addon/Test/checks
+            grasshopper-plugin/TapirGrasshopperPlugin
           persist-credentials: false
 
       - name: Merge everything that qualifies
@@ -452,8 +459,8 @@ jobs:
             # existing behaviour. Plain rules over metadata (.github/governance/
             # README.md): competing pull requests, a revert, a second solution
             # for one issue, change requests or long back-and-forth, and, for
-            # the bot, removed or altered code and the ratified scope and
-            # decisions. A failure to read any of it holds the pull request.
+            # the bot, removed or altered code, the ratified scope and
+            # decisions, repeated code and a new command without a check. A failure to read any of it holds the pull request.
             # Cheap first: a conflicting pull request cannot merge anyway.
             if [ "$mergeable" = "CONFLICTING" ]; then
               echo "skip: not mergeable (mergeable=$mergeable)"
@@ -474,7 +481,7 @@ jobs:
               fi
               verdict=$(jq -r .verdict <<<"$report")
               if [ "$verdict" != "ok" ]; then
-                reasons=$(jq -r '(.contested + .change)[] | "- " + .' <<<"$report")
+                reasons=$(jq -r '(.contested + .change + .quality)[] | "- " + .' <<<"$report")
                 echo "skip: held for a person ($verdict):"
                 printf '%s\n' "$reasons" | sed 's/^/    /'
                 gh pr edit "$pr" --repo "$REPO" --add-label needs-direction || echo "::warning::could not label #$pr"

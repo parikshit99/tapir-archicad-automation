@@ -84,5 +84,19 @@
     "revert_window_days": 14,
     "revert_min_matching_lines": 5,
     "note": "max_human_comments is the N of the design. All three numbers are open for the owner."
+  },
+  "quality": {
+    "note": "Quality rules for the issue bot's pull requests. Source files are the ones matching source_files outside additive_split.non_behavioral. duplicate_max_percent comes from 20 merged pull requests (November 2026): people's repeated 0% of their added lines, the bot's up to 38%. All numbers are open for the owner.",
+    "source_files": [
+      "*.cpp",
+      "*.hpp",
+      "*.h",
+      "*.cs",
+      "*.py"
+    ],
+    "duplicate_window": 6,
+    "duplicate_min_lines": 60,
+    "duplicate_max_percent": 25,
+    "require_check_for_new_commands": true
   }
 }

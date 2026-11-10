@@ -49,6 +49,8 @@ Each rule is a jq/shell test; the reasons are posted on the pull request.
 | A reviewer's latest review requests changes, or more than `max_human_comments` human comments (community test results, `tapir-test:`, are not counted) | all |
 | **Change, not addition**: removes or renames a file, removes more than `max_deleted_lines` lines of an existing file, or edits an existing file in `builtin-scripts/` or `marketplace/`. Docs, tests and examples do not count. | the issue bot |
 | A ratified scope or decision entry matches | the issue bot |
+| **Repeated code**: more than `quality.duplicate_max_percent` of the added source lines sit in blocks of `duplicate_window` lines that already exist on `main` or earlier in the same pull request (only from `duplicate_min_lines` added lines up) | the issue bot |
+| **No check**: registers a new command in `AddOnMain.cpp` without a check that calls it in `archicad-addon/Test/checks/` (in the pull request or already on `main`) | the issue bot |
 
 A held pull request gets the `needs-direction` label and one comment; auto-merge and the
 steward leave it alone. A maintainer who removes the label releases it, and the gate is not
