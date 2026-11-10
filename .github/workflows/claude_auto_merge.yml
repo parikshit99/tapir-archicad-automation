@@ -1,11 +1,15 @@
 name: Auto Merge
 
-# Merges pull requests that clear three gates:
+# Merges pull requests that clear four gates:
 #
 #   1. the author has write access to this repository - or the pull request
 #      is the issue bot's own (see "Bot pull requests" below)
 #   2. every check has passed
 #   3. the diff touches none of the release critical paths
+#   4. the pull request is not contested, and the bot's is not a change to
+#      existing behaviour (.github/governance/README.md): otherwise it gets the
+#      `needs-direction` label and a comment, and waits for a maintainer, who
+#      releases it by removing the label
 #
 # Bot pull requests. The maintainer's decision: a pull request the issue bot
 # (claude_issue_triage.yml) opened from anyone's issue is merged without a
@@ -47,9 +51,9 @@ name: Auto Merge
 # This workflow never checks out the pull request's code. It only queries the
 # API, so nothing from the branch being merged executes with the write token.
 #
-# Decided and not open: there is deliberately no fourth gate on approval or on
-# an auto-merge label. The three gates test who wrote it, whether it is green
-# and what it touches - not whether anyone wanted it merged - so a pull request
+# Decided and not open: there is deliberately no gate on approval or on an
+# auto-merge label. The gates test who wrote it, whether it is green, what it
+# touches and whether it is contested - not whether anyone wanted it merged - so a pull request
 # left open to park work will merge itself at the next sweep. Mark such a pull
 # request as a draft, which is the opt-out. Note also that a green `review`
 # check means the review ran, not that it approved anything - for a human's
@@ -103,6 +107,16 @@ jobs:
           echo "Newer runs waiting or running: $newer"
           echo "count=$newer" >> "$GITHUB_OUTPUT"
 
+      # The governance rules (.github/governance/): main's copy, never a pull
+      # request's. Only that folder is fetched, and no credentials are kept.
+      - name: Load the governance rules from main
+        if: steps.newer.outputs.count == '0'
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          sparse-checkout: .github/governance
+          persist-credentials: false
+
       - name: Merge everything that qualifies
         if: steps.newer.outputs.count == '0'
         env:
@@ -127,7 +141,64 @@ jobs:
           # and signs with. The one exception is the bot's own new Archicad
           # version pull request (archicad_devkit_update.yml), which may only
           # append entries to it - see devkits_appended below.
-          PROTECTED='^\.github/|^archicad-addon/Tools/|^archicad-addon/Installer/|^tools/|^archicad-addon/devkits\.json$|CMakeLists\.txt$|\.cmake$|\.csproj$'
+          # The list also holds the files that steer the bots (CLAUDE.md,
+          # AGENTS.md, SKILL.md, .claude/) and the scope and decisions files in
+          # .github/governance/, so the bots cannot edit their own direction.
+          # It lives in lib.sh so test_governance.sh tests the same pattern.
+          # shellcheck source=/dev/null
+          source .github/governance/lib.sh
+          PROTECTED=$GOV_PROTECTED
+
+          GOVW=$(mktemp -d)
+
+          # Files of a pull request, fetched once per sweep. Prints the path.
+          pr_files () {
+            local f="$GOVW/files-$1.json"
+            if [ ! -s "$f" ]; then
+              gh api --paginate "repos/$REPO/pulls/$1/files?per_page=100" | jq -s 'add // []' > "$f" || { rm -f "$f"; return 1; }
+            fi
+            echo "$f"
+          }
+
+          # [{number, files, refs}] for a JSON list of {number, body}; fails
+          # when any file list cannot be read.
+          with_files () {
+            local list=$1 out='[]' len i n refs f
+            len=$(jq length <<<"$list")
+            for ((i = 0; i < len; i++)); do
+              n=$(jq -r ".[$i].number" <<<"$list")
+              refs=$(jq -r ".[$i].body // \"\"" <<<"$list" | gov_issue_refs)
+              f=$(pr_files "$n") || return 1
+              out=$(jq --argjson n "$n" --argjson refs "$refs" --slurpfile fs "$f" \
+                       '. + [{number: $n, files: $fs[0], refs: $refs}]' <<<"$out")
+            done
+            printf '%s' "$out"
+          }
+
+          # Gathers the governance gate's input for one pull request into a
+          # directory (the contract is in lib.sh). Fails closed.
+          gov_collect () {
+            local n=$1 w=$2 bot=$3 win days
+            jq -n --argjson n "$n" --argjson bot "$bot" \
+               --slurpfile i <(gh pr view "$n" --repo "$REPO" --json title,body) \
+               '{number: $n, title: $i[0].title, body: $i[0].body, is_bot: $bot}' > "$w/meta.json" || return 1
+            cp "$(pr_files "$n")" "$w/files.json" || return 1
+            # Other open, ready pull requests (a draft is parked work).
+            with_files "$(jq --argjson n "$n" '[.[] | select(.number != $n and (.isDraft | not))]' <<<"$ALL_OPEN")" > "$w/open_others.json" || return 1
+            # Merged inside the revert window; fetched once per sweep.
+            if [ ! -s "$GOVW/merged.json" ]; then
+              days=$(jq '.contested.revert_window_days // 14' .github/governance/scope.json)
+              win=$(date -u -d "$days days ago" +%Y-%m-%dT%H:%M:%SZ)
+              with_files "$(gh pr list --repo "$REPO" --state merged --base main --limit 100 --json number,body,mergedAt \
+                --jq "[.[] | select(.mergedAt >= \"$win\") | {number, body}]")" > "$GOVW/merged.json" || return 1
+            fi
+            cp "$GOVW/merged.json" "$w/merged_recent.json"
+            { gh api --paginate "repos/$REPO/issues/$n/comments?per_page=100"
+              gh api --paginate "repos/$REPO/pulls/$n/comments?per_page=100"; } \
+              | jq -s 'add | map({login: .user.login, type: .user.type})' > "$w/comments.json" || return 1
+            gh api --paginate "repos/$REPO/pulls/$n/reviews?per_page=100" \
+              | jq -s 'add // [] | map({login: .user.login, type: .user.type, state})' > "$w/reviews.json" || return 1
+          }
 
           # True when the head's devkits.json is main's with new Archicad
           # versions appended and nothing else changed: the same entries in the
@@ -167,6 +238,9 @@ jobs:
           candidates=$(gh pr list --repo "$REPO" --state open --base main --limit 1000 \
             --json number --jq '.[].number')
 
+          ALL_OPEN=$(gh pr list --repo "$REPO" --state open --base main --limit 1000 \
+            --json number,body,isDraft)
+
           if [ -z "${candidates:-}" ]; then
             echo "No open pull requests to consider."
             exit 0
@@ -197,6 +271,13 @@ jobs:
 
             if [ "$base" != "main" ]; then
               echo "skip: targets '$base', not main - stacked pull requests are merged by hand"
+              echo "::endgroup::"; continue
+            fi
+
+            # Held for a person by the governance gate below (or by hand). A
+            # maintainer who removes the label releases the pull request.
+            if printf '%s' "$info" | jq -e '[.labels[].name] | index("needs-direction")' >/dev/null; then
+              echo "skip: labelled needs-direction, waiting for a maintainer"
               echo "::endgroup::"; continue
             fi
 
@@ -364,6 +445,40 @@ jobs:
               echo "::endgroup::"; continue
             fi
 
+            # Gate 4: not contested, and for the issue bot not a change to
+            # existing behaviour. Plain rules over metadata (.github/governance/
+            # README.md): competing pull requests, a revert, a second solution
+            # for one issue, change requests or long back-and-forth, and, for
+            # the bot, removed or altered code and the ratified scope and
+            # decisions. A failure to read any of it holds the pull request.
+            released=$(gh api --paginate "repos/$REPO/issues/$pr/events?per_page=100" \
+              --jq '.[] | select(.event == "unlabeled" and .label.name == "needs-direction" and .actor.type == "User") | 1' | wc -l) || released=0
+            if [ "${released:-0}" -gt 0 ]; then
+              echo "a maintainer released this pull request from needs-direction: gate 4 is not applied"
+            else
+              W="$GOVW/pr-$pr"; mkdir -p "$W"
+              if ! gov_collect "$pr" "$W" "$isBot"; then
+                echo "skip: could not read what the governance gate needs"
+                echo "::endgroup::"; continue
+              fi
+              if ! report=$(gov_report "$W"); then
+                echo "skip: the governance gate failed to run"
+                echo "::endgroup::"; continue
+              fi
+              verdict=$(jq -r .verdict <<<"$report")
+              if [ "$verdict" != "ok" ]; then
+                reasons=$(jq -r '(.contested + .change)[] | "- " + .' <<<"$report")
+                echo "skip: held for a person ($verdict):"
+                printf '%s\n' "$reasons" | sed 's/^/    /'
+                gh label create needs-direction --repo "$REPO" --color B60205 \
+                  --description "A maintainer has to decide before this merges" >/dev/null 2>&1 || true
+                gh pr edit "$pr" --repo "$REPO" --add-label needs-direction || echo "::warning::could not label #$pr"
+                msg=$(printf 'Auto-merge is held for a maintainer, because:\n\n%s\n\nThis is a mechanical check, not a verdict on the change. A maintainer decides; removing the `needs-direction` label releases this pull request.' "$reasons")
+                gh pr comment "$pr" --repo "$REPO" --body "$msg" || echo "::warning::could not comment on #$pr"
+                echo "::endgroup::"; continue
+              fi
+            fi
+
             # Conflicts, or a base branch that has moved on. GitHub computes
             # mergeability in the background and resets it whenever main moves,
             # so the first read after a merge is often UNKNOWN: ask again.
@@ -384,7 +499,7 @@ jobs:
               delete=""
             fi
 
-            echo "merging: all three gates passed ($total checks green, author $author: $permission)"
+            echo "merging: all gates passed ($total checks green, author $author: $permission)"
 
             # --match-head-commit pins the merge to the commit the gates were
             # evaluated against. Without it a push landing between the checks

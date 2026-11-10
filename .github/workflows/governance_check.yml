@@ -1,0 +1,33 @@
+name: Governance Check
+
+# Tests the governance rules of claude_auto_merge.yml (.github/governance/) on
+# fixtures and checks the shape of the scope and decisions files. No model, no
+# network, and it only reads the files of the commit it runs on.
+
+on:
+  pull_request:
+    paths:
+      - '.github/governance/**'
+      - '.github/workflows/claude_auto_merge.yml'
+      - '.github/workflows/governance_check.yml'
+  push:
+    branches: [main]
+    paths:
+      - '.github/governance/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  governance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Validate scope.json and decisions.json
+        run: bash .github/governance/validate_governance.sh
+      - name: Test the rules
+        run: bash .github/governance/test_governance.sh

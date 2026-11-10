@@ -104,7 +104,7 @@ name: Claude Bot PR Steward
 #   A fix run also waits for a model slot first and reports a run the API
 #   refused in its job summary (#977, see the header of
 #   claude_issue_triage.yml).
-# - A pull request labelled `needs-maintainer` or `do-not-merge`, or converted
+# - A pull request labelled `needs-maintainer`, `needs-direction` or `do-not-merge`, or converted
 #   to a draft, is left alone - that is how a person takes one over.
 # - A sweep starts new work (builds, a review or a fix) on at most
 #   BOT_PR_SWEEP_BATCH pull requests (repository variable, default 15), so a
@@ -197,6 +197,7 @@ jobs:
                                and (.headRefName | startswith("claude/"))
                                and (.isCrossRepository | not) and (.isDraft | not)
                                and ([.labels[].name] | index("needs-maintainer") | not)
+                               and ([.labels[].name] | index("needs-direction") | not)
                                and ([.labels[].name] | index("do-not-merge") | not))]')
           if [ "$(jq length <<<"$prs")" -eq 0 ]; then
             echo "No bot pull requests to look after."
@@ -574,7 +575,7 @@ jobs:
           if ! jq -e '.state == "OPEN" and (.isDraft | not) and (.isCrossRepository | not)
                       and (.author.login == "app/github-actions" or .author.login == "github-actions[bot]" or .author.login == "github-actions")
                       and (.headRefName | test("^claude/[A-Za-z0-9._/-]+$"))
-                      and ([.labels[].name] | (index("needs-maintainer") or index("do-not-merge")) | not)' <<<"$info" >/dev/null; then
+                      and ([.labels[].name] | (index("needs-maintainer") or index("needs-direction") or index("do-not-merge")) | not)' <<<"$info" >/dev/null; then
             echo "::error::#$PR_NUMBER is not an open, ready pull request of the issue bot."
             exit 1
           fi
